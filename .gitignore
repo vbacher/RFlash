@@ -4,3 +4,20 @@ AGENTS.md
 # data
 data/abdominal/
 data/synth_liver/
+
+# generated outputs
+outputs/
+debugging/
+
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+
+# editor
+.vscode/
+
+# outputs
+outputs/
+debugging/
