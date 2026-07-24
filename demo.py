@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 
+from networkx import volume
 import numpy as np
 import torch
 
@@ -15,17 +16,17 @@ from src.utils.io import (
     load_image_directory,
     load_synthetic_liver,
     load_volume,
-    to_jsonable,
     save_volume,
     to_8bit_graysacle,
+    get_medpy_header,
 )
 from src.utils.transformations import standardize_volume
-from src.datasets import Dataset_3D_volume
+from src.datasets import Dataset_3D_volume, Dataset_2D_lin_array
 from src.model.representation import SlicePoses, ExplicitRepresentation
 from src.model.rendering import Render_engine
 from src.shadow_reduction import render_volume
 
-from src.trainings_params import Parameter_Demo3D
+from src.trainings_params import Parameter_Demo3D, Parameter_Demo2D
 from src.train import train_model
 
 from src.utils.visualization import visualize_stats
@@ -99,6 +100,11 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
         file_path=output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz"),
         header=header,
     )
+    save_volume(
+        volume=to_8bit_graysacle(volume, volume_mask=volume > 0.01),
+        file_path=output_dir.joinpath("shadow_removed", "original_volume.nii.gz"),
+        header=header,
+    )
 
 
 def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
@@ -118,6 +124,56 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     stack = load_synthetic_liver(args.input)
+
+    params = Parameter_Demo2D()
+    stack = standardize_volume(stack, params.init_values[1])
+
+    # create traiings dataset
+    dataset = Dataset_2D_lin_array(stack=stack)
+
+    # initialize models
+    pose_model = SlicePoses(dataset.get_localization())
+    representation_model = ExplicitRepresentation(
+        volume_shape=stack.shape,
+        constant_init_values=params.init_values,
+    )
+    render_model = Render_engine(
+        image_size_polar=dataset.sh.frame_size_cart_pix,
+        constant_init_values=params.init_values,
+        compression=params.compression,
+    )
+
+    # train decomposition model
+    loss, l2, ssim = train_model(
+        representation_model=representation_model,
+        pose_model=pose_model,
+        render_model=render_model,
+        data=dataset,
+        training_params=params,
+        device=device,
+    )
+    if not args.silent:
+        visualize_stats(loss, l2, ssim, output_dir=output_dir.joinpath("training_stats"))
+
+    # Obtain shadow reduced volume from the trained model
+    shadow_reduced, _ = render_volume(
+        representation_model=representation_model,
+        pose_model=pose_model,
+        render_model=render_model,
+        dataset=dataset,
+        batch_size=params.params_generator["batch_size"],
+    )
+
+    save_volume(
+        volume=to_8bit_graysacle(shadow_reduced, volume_mask=np.ones_like(shadow_reduced, dtype=bool)),
+        file_path=output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz"),
+        header=get_medpy_header(),
+    )
+    save_volume(
+        volume=to_8bit_graysacle(stack, volume_mask=np.ones_like(stack, dtype=bool)),
+        file_path=output_dir.joinpath("shadow_removed", "original_volume.nii.gz"),
+        header=get_medpy_header(),
+    )
 
 
 def run_demo(args: argparse.Namespace) -> None:
@@ -156,17 +212,17 @@ def parse_args() -> argparse.Namespace:
         "-i",
         "--input",
         type=Path,
-        default=Path("data/fetal_brain/test_3d.nii.gz"),
+        # default=Path("data/fetal_brain/test_3d.nii.gz"),
         # default="/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images/train"
-        # default=Path("/home/scratch/valher/data/RFlash-demo/syn_liver"),
+        default=Path("/home/scratch/valher/data/RFlash-demo/syn_liver"),
         help="Input .mha file, image directory, .npy file, or .npy directory.",
     )
     parser.add_argument(
         "-d",
         "--dataset",
         choices=DATASET_CHOICES,
-        default="fetal_brain",
-        # default="synthetic_liver",
+        # default="fetal_brain",
+        default="synthetic_liver",
         help="Dataset format to load.",
     )
     parser.add_argument(

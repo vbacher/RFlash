@@ -158,7 +158,6 @@ class Dataset_2D_lin_array(data.Dataset):
         self,
         stack: np.ndarray,
         pixel_spacing_mm: list[float] = [1.0, 1.0, 1.0],
-        pre_rot: list[float] = [0, 0, 0],
     ) -> None:
         """Creates pytorch dataset from a 2D slice stack, by sampling evenly spaced slices from the volume.
 
@@ -193,11 +192,10 @@ class Dataset_2D_lin_array(data.Dataset):
 
         # get affine rotation matrices
         self.thetas = torch.zeros_like(self.Ts, dtype=torch.float32)
-        pre_rot_mat = rotmat_from_euler(torch.tensor(pre_rot)[None, ...])[0]
         affine_mats = rotmat_from_euler(self.thetas)
         scale_mat = torch.tensor(np.eye(4) / np.concatenate([pixel_spacing_mm, [1]]), dtype=torch.float32)
         unscale_mat = torch.tensor(np.eye(4) * np.concatenate([pixel_spacing_mm, [1]]), dtype=torch.float32)
-        self.affine_mats = scale_mat @ pre_rot_mat @ affine_mats @ unscale_mat
+        self.affine_mats = scale_mat @ affine_mats @ unscale_mat
 
         # Add translation to origines
         self.affine_mats[:, :3, 3].copy_(self.Ts)
