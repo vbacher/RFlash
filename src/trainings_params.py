@@ -29,7 +29,17 @@ class Parameter_Demo3D(TrainingParams):
         self.num_fan_slices: int | None = None
 
 
-class Parameter_Demo2D(TrainingParams):
+class Parameter_Demo2D_curvylinear(TrainingParams):
+    def __init__(self) -> None:
+        super().__init__("synthetic liver")
+
+        # can be set manually but default values are chosen based on volume dimensions
+        self.image_size_polar: np.ndarray | None = None
+        self.image_size_cartesian: np.ndarray | None = None
+        self.lr = 0.02
+
+
+class Parameter_Demo2D_linear(TrainingParams):
     def __init__(self) -> None:
         super().__init__("synthetic liver")
 

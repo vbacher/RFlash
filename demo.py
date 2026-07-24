@@ -20,13 +20,13 @@ from src.utils.io import (
     to_8bit_graysacle,
     get_medpy_header,
 )
-from src.utils.transformations import standardize_volume
+from src.utils.transformations import standardize_volume, resample_to_simulation_space, resample_to_image_space
 from src.datasets import Dataset_3D_volume, Dataset_2D_lin_array
 from src.model.representation import SlicePoses, ExplicitRepresentation
 from src.model.rendering import Render_engine
 from src.shadow_reduction import render_volume
 
-from src.trainings_params import Parameter_Demo3D, Parameter_Demo2D
+from src.trainings_params import Parameter_Demo3D, Parameter_Demo2D_curvylinear, Parameter_Demo2D_linear
 from src.train import train_model
 
 from src.utils.visualization import visualize_stats
@@ -117,6 +117,19 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
         stack, spacing_mm=(1.0, 1.0), overlay_dir=f"{output_dir}/intermediate_images", verbose=not args.silent
     )
     stack = stack[indices]
+    stack = np.transpose(stack, (1, 2, 0))
+
+    params = Parameter_Demo2D_curvylinear()
+    params.image_size_polar = (np.asarray(stack.shape[:-1]) * 1.1).astype(np.int16)
+    params.image_size_cartesian = np.asarray(stack.shape[:-1]).astype(np.int16)
+
+    stack_sim = resample_to_simulation_space(stack, geometry, params)
+
+    # FIXME: continue here
+    data_orig = data.copy()
+    data = dataset.resample_to_simulation_space(data, geometries, params)
+    vol_mask = dataset.resample_to_image_space(np.ones_like(data, dtype=bool), geometries, params).astype(bool)
+    stack = standardize_volume(stack, params.init_values[1])
 
 
 def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> None:
@@ -125,7 +138,7 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
 
     stack = load_synthetic_liver(args.input)
 
-    params = Parameter_Demo2D()
+    params = Parameter_Demo2D_linear()
     stack = standardize_volume(stack, params.init_values[1])
 
     # create traiings dataset
@@ -213,8 +226,8 @@ def parse_args() -> argparse.Namespace:
         "--input",
         type=Path,
         # default=Path("data/fetal_brain/test_3d.nii.gz"),
-        # default="/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images/train"
-        default=Path("/home/scratch/valher/data/RFlash-demo/syn_liver"),
+        default="/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images/train",
+        # default=Path("/home/scratch/valher/data/RFlash-demo/syn_liver"),
         help="Input .mha file, image directory, .npy file, or .npy directory.",
     )
     parser.add_argument(
@@ -222,7 +235,7 @@ def parse_args() -> argparse.Namespace:
         "--dataset",
         choices=DATASET_CHOICES,
         # default="fetal_brain",
-        default="synthetic_liver",
+        default="abdominal",
         help="Dataset format to load.",
     )
     parser.add_argument(
