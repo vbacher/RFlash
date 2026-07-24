@@ -3,3 +3,5 @@ matplotlib>=3.7
 medpy>=0.5
 opencv-python
 torch
+tqdm
+torchmetrics

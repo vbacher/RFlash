@@ -8,13 +8,27 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import torch
 
-from src.transducer_geometry import estimate_scanner_geometry_volume, estimate_scanner_geometries_stack
-from src.utils.io import load_image_directory, load_synthetic_liver, load_volume, to_jsonable
+from src.utils.transducer_geometry import estimate_scanner_geometry_volume, estimate_scanner_geometries_stack
+from src.utils.io import (
+    load_image_directory,
+    load_synthetic_liver,
+    load_volume,
+    to_jsonable,
+    save_volume,
+    to_8bit_graysacle,
+)
 from src.utils.transformations import standardize_volume
+from src.datasets import Dataset_3D_volume
+from src.model.representation import SlicePoses, ExplicitRepresentation
+from src.model.rendering import Render_engine
+from src.shadow_reduction import render_volume
 
-standardize_volume
-from src.trainings_params import Demo3D
+from src.trainings_params import Parameter_Demo3D
+from src.train import train_model
+
+from src.utils.visualization import visualize_stats
 
 # FIXME:remove
 from src.utils.visualization import visualize_2d_image
@@ -23,40 +37,113 @@ from src.utils.visualization import visualize_2d_image
 DATASET_CHOICES = ("fetal_brain", "abdominal", "synthetic_liver")
 
 
-def run_demo(args: argparse.Namespace) -> dict:
-    """Load a dataset and estimate its ultrasound fan geometry."""
+def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    volume, header = load_volume(args.input)
+    spacing_mm = np.asarray([float(value) for value in header.spacing])
+
+    # estimate transducer geometry
+    geometry = estimate_scanner_geometry_volume(
+        volume, spacing_mm, overlay_dir=f"{output_dir}/intermediate_images", verbose=not args.silent
+    )
+    params = Parameter_Demo3D()
+    params.image_size_polar = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
+    params.image_size_cartesian = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
+    params.num_fan_slices = int(volume.shape[1] * 0.9)
+
+    volume = standardize_volume(volume, params.init_values[1])
+
+    # create traiings dataset
+    dataset = Dataset_3D_volume(
+        volume=volume, model_params=params, geometry=geometry, pixel_spacing_mm=spacing_mm, device=device
+    )
+
+    # initialize models
+    pose_model = SlicePoses(dataset.get_localization(), spacing_mm)
+    representation_model = ExplicitRepresentation(
+        volume_shape=volume.shape,
+        constant_init_values=params.init_values,
+    )
+    render_model = Render_engine(
+        image_size_polar=dataset.sh.frame_size_pol,
+        constant_init_values=params.init_values,
+        compression=params.compression,
+    )
+
+    # train decomposition model
+    loss, l2, ssim = train_model(
+        representation_model=representation_model,
+        pose_model=pose_model,
+        render_model=render_model,
+        data=dataset,
+        training_params=params,
+        device=device,
+    )
+    if not args.silent:
+        visualize_stats(loss, l2, ssim, output_dir=output_dir.joinpath("training_stats"))
+
+    # Obtain shadow reduced volume from the trained model
+    shadow_reduced, _ = render_volume(
+        representation_model=representation_model,
+        pose_model=pose_model,
+        render_model=render_model,
+        dataset=dataset,
+        batch_size=params.params_generator["batch_size"],
+    )
+
+    save_volume(
+        volume=to_8bit_graysacle(shadow_reduced, volume_mask=shadow_reduced > 0.01),
+        file_path=output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz"),
+        header=header,
+    )
+
+
+def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
+
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stack = load_image_directory(args.input)
+    geometry, indices = estimate_scanner_geometries_stack(
+        stack, spacing_mm=(1.0, 1.0), overlay_dir=f"{output_dir}/intermediate_images", verbose=not args.silent
+    )
+    stack = stack[indices]
+
+
+def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> None:
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stack = load_synthetic_liver(args.input)
+
+
+def run_demo(args: argparse.Namespace) -> None:
+    """Load a dataset and estimate its ultrasound fan geometry."""
+
+    # get execution device
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    if not args.silent:
+        print(f"executing on {device} device")
+
     if args.dataset == "fetal_brain":
-        volume, header = load_volume(args.input)
-        spacing_mm = tuple(float(value) for value in header.spacing)
-
-        # estimate transducer geometry
-        geometry = estimate_scanner_geometry_volume(
-            volume, spacing_mm, overlay_dir=f"{output_dir}/intermediate_images", verbose=not args.silent
-        )
-        params = Demo3D()
-        params.image_size_polar = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
-        params.image_size_cartesian = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
-
-        volume = standardize_volume(volume, params.init_values[1])
+        run_3D_volume_demo(args, device=device)
 
     elif args.dataset == "abdominal":
-        stack = load_image_directory(args.input)
-        geometry, indices = estimate_scanner_geometries_stack(
-            stack, spacing_mm=(1.0, 1.0), overlay_dir=f"{output_dir}/intermediate_images", verbose=not args.silent
-        )
-        stack = stack[indices]
-        print("continue implementing")
+        run_2D_stack_demo(args, device=device)
+
     elif args.dataset == "synthetic_liver":
-        stack = load_synthetic_liver(args.input)
-        print("continue implementing")
+        run_synthetic_liver_demo(args, device=device)
 
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
-    return {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,5 +188,4 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    result = run_demo(parse_args())
-    print(json.dumps(to_jsonable(result), indent=2))
+    run_demo(parse_args())

@@ -6,12 +6,21 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from glob import glob
+import torch
+from cv2 import erode
 
 import numpy as np
 from medpy.io.header import Header
 from medpy.io.load import load
+from medpy.io.save import save
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+
+
+def get_medpy_header(spacing_mm: list[float] | np.ndarray) -> Header:
+    header = Header()
+    header.spacing = spacing_mm
+    return header
 
 
 def load_volume(file_path: str) -> tuple[np.ndarray, Header]:
@@ -93,7 +102,7 @@ def _ensure_image_stack(array: np.ndarray) -> np.ndarray:
     raise ValueError(f"Expected 2D images or an image stack, got shape {image_array.shape}.")
 
 
-def _read_grayscale_image(image_path: Path) -> np.ndarray:
+def _read_grayscale_image(image_path: Path | str) -> np.ndarray:
     """Read an image with matplotlib and convert RGB/RGBA files to grayscale."""
 
     image = plt.imread(image_path)
@@ -151,3 +160,68 @@ def load_synthetic_liver(input_path: str | Path) -> np.ndarray:
     if any(stack.shape[1:] != first_shape for stack in stacks):
         raise ValueError("Synthetic liver arrays must share the same image shape.")
     return np.concatenate(stacks, axis=0)
+
+
+def to_8bit_graysacle(image: Any, volume_mask: Any | None = None) -> np.ndarray:
+
+    # volume_mask = erode(volume_mask.astype(np.uint8), None, iterations=6).astype(bool)
+
+    if torch.is_tensor(image):
+        image = image.detach().cpu().numpy()
+
+    if volume_mask is not None:
+        image = image - image[volume_mask].mean()
+        image = image / (image[volume_mask].std() / (128 / 4))  # 2
+        image = image + 128
+        image[image < 0] = 0
+        image[image > 255] = 255
+        image = image.astype(np.uint8)
+    else:
+        image = image - image.min()
+        image = ((image / image.max()) * 255).astype(np.uint8)
+    return image
+
+
+def save_img(img, spacing_mm, o_path, f_name, title=None) -> None:
+    _, ax = plt.subplots()
+    if title is not None:
+        ax.set_title(title)
+    ax.imshow(img, aspect=spacing_mm[0] / spacing_mm[1], cmap="grey")
+    plt.savefig(f"{o_path}/{f_name}.png")
+    plt.close()
+
+
+def save_volume(
+    volume: np.ndarray | torch.Tensor,
+    file_path: Path | str,
+    header: None | Header = None,
+) -> None:
+    """Helper to save volumes
+
+    Args:
+        volume (np.ndarray | torch.Tensor): Volume to store
+        opath (Path): opath without filename
+        filename (str): Filename
+        data_format (str, optional): data format. Defaults to '.mha'.
+        header (None | Header, optional): Medpy header. Defaults to None.
+        pixel_spacing (list, optional): Pixel spacing. Defaults to [1,1,1].
+        override (bool, optional): Silently override existing volumes. Defaults to True.
+    """
+
+    if isinstance(file_path, str):
+        file_path = Path(file_path)
+
+    data_format = Path(file_path).suffix.lower()
+    if data_format == ".gz":
+        data_format = Path(file_path).suffixes[-2].lower() + data_format
+
+    assert any(
+        data_format == i for i in [".mha", ".nii", ".nii.gz", ".dcm", ".mhd"]
+    ), f" The format {data_format} is currently not supported"
+
+    # check if folder exists
+    if not file_path.parent.exists():
+        file_path.parent.mkdir(parents=True)
+
+    # save file
+    save(volume, file_path, hdr=header, use_compression=True)

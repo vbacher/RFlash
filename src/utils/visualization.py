@@ -1,7 +1,9 @@
 from __future__ import annotations
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+from pathlib import Path
 from typing import Sequence
 
 # FIXME: Remove this global counter in final version which is publicly released. This is only for debugging and visualization of intermediate results.
@@ -48,7 +50,9 @@ def visualize_2d_image(
     plt.close()
 
 
-def visualize_vol(volume: np.ndarray | torch.Tensor, spacing_mm: Sequence = [1, 1, 1], title="volume") -> None:
+def visualize_vol(
+    volume: np.ndarray | torch.Tensor, spacing_mm: list[float] | np.ndarray = [1.0, 1.0, 1.0], title="volume"
+) -> None:
     """Visualize ultrasound volume. For easier debugging, the visualization is not normalized.
 
     Args:
@@ -84,4 +88,33 @@ def visualize_vol(volume: np.ndarray | torch.Tensor, spacing_mm: Sequence = [1, 
         global ctr
         plt.savefig(f"./debugging/out_{ctr:03d}.png")
         ctr += 1
+    plt.close()
+
+
+def visualize_stats(
+    losses: list[float], l2s: list[float], ssims: list[float], output_dir: str | Path, title="Training Statistics"
+) -> None:
+    """Visualize training statistics.
+
+    Args:
+        losses (list[float]): List of loss values.
+        l2s (list[float]): List of L2 values.
+        ssims (list[float]): List of SSIM values.
+        output_path (str): Path to save the visualization.
+        title (str, optional): Title of the plot. Defaults to "Training Statistics".
+    """
+    fig, ax = plt.subplots(3, 1, figsize=(10, 10), layout="constrained")
+    fig.suptitle(title)
+    ax[0].plot(losses)
+    ax[0].set_title("Loss")
+    ax[0].set_yscale("log")
+    ax[1].plot(l2s)
+    ax[1].set_title("L2")
+    ax[1].set_yscale("log")
+    ax[2].plot(ssims)
+    ax[2].set_title("SSIM")
+    ax[2].set_yscale("log")
+
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(f"{output_dir}/training_stats.png")
     plt.close()

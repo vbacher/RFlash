@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import sys
 from src.utils.transformations import transform_slice
-from src.utils.visualization import visualize_vol, visualize_2d_stack
+from src.utils.visualization import visualize_vol
 
 ###### body ######
 
@@ -13,10 +13,11 @@ class VolumeHandler:
     def __init__(
         self,
         volume: torch.Tensor,
-        pixel_spacing: list[float] = [1, 1, 1],
+        pixel_spacing: list[float] | np.ndarray = [1, 1, 1],
         volume_mask: torch.Tensor | None = None,
     ):
-        """Constructor of Volume Handler. The volume handler is mainly designe to hold volume and corresponding mask as well as interpolate.
+        """Constructor of Volume Handler. The volume handler is mainly designe to hold volume and corresponding mask
+        as well as interpolate.
 
         Args:
             volume (torch.Tensor): Volume to create volume handler of
@@ -94,8 +95,8 @@ class StackHandler:
             >>> vh = VolumeHandler(volume)
         """
 
-        assert stack.ndim == 3, f"Volume tensor must be 3D"
-        assert stack.ndim == pixel_spacing.__len__(), f"Pixcel spacing must have size 3 but is of "
+        assert stack.ndim == 3, "Volume tensor must be 3D"
+        assert stack.ndim == pixel_spacing.__len__(), "Pixcel spacing must have size 3 but is of "
 
         # masking cone from background
         if volume_mask is None:
@@ -144,12 +145,12 @@ class StackHandler:
 class SliceHandler:
     def __init__(
         self,
-        frame_size_cart_pix: list[int],  # x,y in pix
-        frame_size_polar: list[int],  # r, phi
-        source_pos_slice_pix: list[float],  # x,y
-        source_pos_tilt_pix: list[float] | None = None,  # x,y
-        pixel_spacing_cart: list = [1, 1],  # x,y
-        radius_range_mm: list[float] | None = None,  # min, max
+        frame_size_cart_pix: np.ndarray,  # x,y in pix
+        frame_size_polar: np.ndarray | None,  # r, phi
+        source_pos_slice_pix: np.ndarray,  # x,y
+        source_pos_tilt_pix: np.ndarray | None = None,  # x,y
+        pixel_spacing_cart: np.ndarray | list[float] = [1.0, 1.0],  # x,y
+        radius_range_mm: np.ndarray | None = None,  # min, max
         angular_range: float | None = None,  # fan_angle
         angular_limits: list | None = None,  # limit points
         axis_added_dimension: int = 1,
@@ -162,8 +163,8 @@ class SliceHandler:
             source_pos_slice (list[float]): Position of the sound source of the fan shaped area of interst of the slice
             source_pos_tilt (list[float] | None, optional): Position of the point around which the internal scanner head turned. Needed for some interpolation. Defaults to None.
             pixel_spacing (list[float], optional): Pixel spacing of slice in mm. Defaults to np.asarray([1,1]).
-            radius_range (list | None, optional): Range of radii defining the fan shaped area of interst. Defaults to None.
-            angular_range (float | None, optional): Angle width defining the fan shaped area of interst. Defaults to None.
+            radius_range (list | None, optional): Range of radii defining the fan shaped area of interst.
+            angular_range (float | None, optional): Angle width defining the fan shaped area of interst.
             angular_limits (list | None, optional): Angular limit points. Defaults to None.
             axis_added_dimension (int): Axis along with the dimention to 3D will be added. Defaults to 1
 
@@ -171,8 +172,11 @@ class SliceHandler:
             >>> #TODO
         """
 
+        assert frame_size_polar is not None, "frame_size_polar must be specified."
+
         # The cone is usually spanned by a curved 1D piezo crystal array, which is tilted inside the 3D scanner head.
-        # source pos slice denotes the points source of the curved array while tilt referes to the point around which the scanner is turned.
+        # source pos slice denotes the points source of the curved array while tilt referes to the point around which
+        # the scanner is turned.
         if source_pos_tilt_pix is None:
             self.source_pos_tilt_pix = np.asarray(source_pos_slice_pix)
             print(
@@ -200,8 +204,8 @@ class SliceHandler:
                 torch.tensor(self.frame_size_cart_mm[0]) + 0.3 * self.frame_size_cart_mm[0],
                 torch.tensor(self.frame_size_cart_mm[1]),
             )  # 0.3
-            self.phi_range = [min(phi_1, phi_2).item(), max(phi_1, phi_2).item()]
-        elif angular_limits is None:
+            self.phi_range = [torch.min(phi_1, phi_2).item(), torch.max(phi_1, phi_2).item()]
+        elif angular_limits is None and angular_range is not None:
             angular_range -= 0.01
             _, phi_ref = self.get_pol_from_cart(
                 torch.tensor(self.source_pos_slice_pix[0]),
@@ -316,13 +320,13 @@ class SliceHandler:
         """Returns tensor containing cartesian coordinates of the fans of al slices in cartesian coordinates.
 
         Args:
-            aff_trans_mat (torch.Tensor): Tensor containg affine transformation matrices for each slice. Shape: (batch, 4, 4)
+            aff_trans_mat (torch.Tensor): Tensor containg affine transformation matrices for each slice.
 
         Returns:
             torch.Tensor: Cartesian coordinates of all slices. Shape (batch, r_range, phi_range, 3)
         """
         bs = aff_trans_mat.shape[0]
-        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, f"Shaoe mismatch. The input must be of shape (bs,4,4)."
+        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, "Shaoe mismatch. The input must be of shape (bs,4,4)."
         device = aff_trans_mat.device
 
         # get slice coords in pix
@@ -514,7 +518,8 @@ def trilinear_interpolation(
 def pseudo_inverse_trilinear_interpolation(
     coord_array: torch.Tensor, volume_shape: tuple, values: torch.Tensor
 ) -> torch.Tensor:
-    """Performes pseudo inverse interpolation. Using the points stored in coord_array and the coresponding values stored in values it populates a volume of shape volume_shape with inverse interpolated values.
+    """Performes pseudo inverse interpolation. Using the points stored in coord_array and the coresponding values
+    stored in values it populates a volume of shape volume_shape with inverse interpolated values.
 
     Args:
         coord_array (torch.Tensor): 3D cartesian coordinates
@@ -525,8 +530,7 @@ def pseudo_inverse_trilinear_interpolation(
         torch.Tensor: Pseudo inverse interpolation
     """
 
-    values_shape = values.shape
-    assert values.shape == coord_array.shape[:-1], f"Missmatch between values and coords shape"
+    assert values.shape == coord_array.shape[:-1], "Missmatch between values and coords shape"
 
     device = coord_array.device
 
@@ -604,21 +608,21 @@ def pseudo_inverse_trilinear_interpolation(
 
 
 def pseudo_inverse_bilinear_interpolation(
-    coord_array: torch.Tensor, imgstack_shape: tuple, values: torch.Tensor
+    coord_array: torch.Tensor, imgstack_shape: tuple | np.ndarray, values: torch.Tensor
 ) -> torch.Tensor:
-    """Performes pseudo inverse interpolation. Using the points stored in coord_array and the coresponding values stored in values it populates a volume of shape volume_shape with inverse interpolated values.
+    """Performes pseudo inverse interpolation. Using the points stored in coord_array and the coresponding values
+    stored in values it populates a volume of shape volume_shape with inverse interpolated values.
 
     Args:
         coord_array (torch.Tensor): 3D cartesian coordinates
-        volume_shape (tuple): Shape of output volume
+        imgstack_shape (tuple | np.ndarray): Shape of output image stack
         values (torch.Tensor): Values corresponding to coord_array
 
     Returns:
         torch.Tensor: Pseudo inverse interpolation
     """
 
-    values_shape = values.shape
-    assert values.shape == coord_array.shape[:-1], f"Missmatch between values and coords shape"
+    assert values.shape == coord_array.shape[:-1], "Missmatch between values and coords shape"
     coord_array = coord_array.clone()
 
     device = coord_array.device
