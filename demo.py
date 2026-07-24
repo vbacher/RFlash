@@ -10,10 +10,14 @@ import sys
 import numpy as np
 
 from src.transducer_geometry import estimate_scanner_geometry_volume, estimate_scanner_geometries_stack
-from src.utils import load_image_directory, load_synthetic_liver, load_volume, to_jsonable
+from src.utils.io import load_image_directory, load_synthetic_liver, load_volume, to_jsonable
+from src.utils.transformations import standardize_volume
+
+standardize_volume
+from src.trainings_params import Demo3D
 
 # FIXME:remove
-from src.utils import visualize_2d_image
+from src.utils.visualization import visualize_2d_image
 
 
 DATASET_CHOICES = ("fetal_brain", "abdominal", "synthetic_liver")
@@ -28,10 +32,17 @@ def run_demo(args: argparse.Namespace) -> dict:
     if args.dataset == "fetal_brain":
         volume, header = load_volume(args.input)
         spacing_mm = tuple(float(value) for value in header.spacing)
+
+        # estimate transducer geometry
         geometry = estimate_scanner_geometry_volume(
             volume, spacing_mm, overlay_dir=f"{output_dir}/intermediate_images", verbose=not args.silent
         )
-        print("continue implementing")
+        params = Demo3D()
+        params.image_size_polar = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
+        params.image_size_cartesian = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
+
+        volume = standardize_volume(volume, params.init_values[1])
+
     elif args.dataset == "abdominal":
         stack = load_image_directory(args.input)
         geometry, indices = estimate_scanner_geometries_stack(
@@ -58,16 +69,17 @@ def parse_args() -> argparse.Namespace:
         "-i",
         "--input",
         type=Path,
-        # default=Path("data/fetal_brain/test_3d.nii.gz"),
-        default="/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images/train",
+        default=Path("data/fetal_brain/test_3d.nii.gz"),
+        # default="/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images/train"
+        # default=Path("/home/scratch/valher/data/RFlash-demo/syn_liver"),
         help="Input .mha file, image directory, .npy file, or .npy directory.",
     )
     parser.add_argument(
         "-d",
         "--dataset",
         choices=DATASET_CHOICES,
-        # default="fetal_brain",
-        default="abdominal",
+        default="fetal_brain",
+        # default="synthetic_liver",
         help="Dataset format to load.",
     )
     parser.add_argument(

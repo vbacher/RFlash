@@ -23,7 +23,7 @@ from cv2 import Canny, HoughLinesP
 from src._datatypes import SliceTransducerGeometry, VolumeTransducerGeometry
 
 # FIXME: remove this import
-from src.utils import visualize_2d_image
+from src.utils.visualization import visualize_2d_image
 
 
 def get_intersect(points: np.ndarray) -> tuple[float, float]:
