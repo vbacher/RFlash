@@ -155,6 +155,17 @@ python demo.py --dataset fetal_brain --input data/fetal_brain/test_3d.nii.gz --o
 
 For abdominal stacks, the script asks how many slices to process because scanner-geometry estimation can require manual inspection when the fan edges are unclear.
 
+## Scanner Geometry Estimation
+
+For our method to work, the scanner geometry must be known, especially for curvilinear and 3D scanners. The geometry is estimated by trying to identify the fan edges in the images and tracing them back to a point source.
+
+This is done automatically, but it can fail, especially when the edges are not visible because of coupling artifacts. For the suggested datasets, this is most relevant for the abdominal dataset. As such, the user is expected to inspect and validate the estimated geometry.
+
+Criteria:
+- The point source should be located in a sensible position above the fan.
+- The yellow circle parts should lie close to the upper and lower edges of the fan.
+- The blue lines on each side should point in the direction of the fan edge. **It is acceptable if they do not trace the entire fan edge.** They are only used to indicate direction, not length.
+
 ## Expected Outputs
 
 Each demo writes outputs below the directory passed with `--output`.

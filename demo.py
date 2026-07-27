@@ -59,7 +59,7 @@ from src.utils.visualization import visualize_stats
 DATASET_CHOICES = ("fetal_brain", "abdominal", "synthetic_liver")
 
 
-def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
+def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> str:
     """Run the full RFlash demo for a 3D ultrasound volume.
 
     Args:
@@ -69,8 +69,7 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
         device: PyTorch device used for model training and rendering.
 
     Returns:
-        None. The function writes shadow-reduced and original volumes to
-        ``<output>/shadow_removed``.
+        The path to the shadow-reduced volume.
     """
 
     output_dir = Path(args.output)
@@ -131,9 +130,10 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
         batch_size=params.params_generator["batch_size"],
     )
 
+    o_path_shadow_reduced = output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz")
     save_volume(
         volume=to_8bit_graysacle(shadow_reduced, volume_mask=shadow_reduced > 0.01),
-        file_path=output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz"),
+        file_path=o_path_shadow_reduced,
         header=header,
     )
     save_volume(
@@ -142,8 +142,10 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
         header=header,
     )
 
+    return o_path_shadow_reduced
 
-def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
+
+def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> str:
     """Run the RFlash demo for a stack of curvilinear 2D ultrasound images.
 
     Args:
@@ -152,8 +154,7 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
         device: PyTorch device used for model training and rendering.
 
     Returns:
-        None. The function saves image-space original and shadow-reduced stacks
-        as medical image volumes.
+        The path to the shadow-reduced volume.
     """
 
     output_dir = Path(args.output)
@@ -219,6 +220,7 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
 
     shadow_reduced = resample_to_image_space(shadow_reduced, geometry, params)
 
+    o_path_shadow_reduced = output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz")
     save_volume(
         volume=to_8bit_graysacle(shadow_reduced, volume_mask=vol_mask),
         file_path=output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz"),
@@ -229,9 +231,10 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
         file_path=output_dir.joinpath("shadow_removed", "original_volume.nii.gz"),
         header=get_medpy_header(),
     )
+    return o_path_shadow_reduced
 
 
-def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> None:
+def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> str:
     """Run the RFlash demo for synthetic linear-probe liver ultrasound data.
 
     Args:
@@ -240,8 +243,7 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
         device: PyTorch device used for model training and rendering.
 
     Returns:
-        None. The function writes original and shadow-reduced stacks to the
-        output directory.
+        The path to the shadow-reduced volume.
     """
 
     output_dir = Path(args.output)
@@ -290,9 +292,10 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
         batch_size=params.params_generator["batch_size"],
     )
 
+    o_path_shadow_reduced = output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz")
     save_volume(
         volume=to_8bit_graysacle(shadow_reduced, volume_mask=np.ones_like(shadow_reduced, dtype=bool)),
-        file_path=output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz"),
+        file_path=o_path_shadow_reduced,
         header=get_medpy_header(),
     )
     save_volume(
@@ -300,6 +303,7 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
         file_path=output_dir.joinpath("shadow_removed", "original_volume.nii.gz"),
         header=get_medpy_header(),
     )
+    return o_path_shadow_reduced
 
 
 def run_demo(args: argparse.Namespace) -> None:
@@ -327,16 +331,18 @@ def run_demo(args: argparse.Namespace) -> None:
         print(f"executing on {device} device")
 
     if args.dataset == "fetal_brain":
-        run_3D_volume_demo(args, device=device)
+        o_path = run_3D_volume_demo(args, device=device)
 
     elif args.dataset == "abdominal":
-        run_2D_stack_demo(args, device=device)
+        o_path = run_2D_stack_demo(args, device=device)
 
     elif args.dataset == "synthetic_liver":
-        run_synthetic_liver_demo(args, device=device)
+        o_path = run_synthetic_liver_demo(args, device=device)
 
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
+
+    print(f"\n Demo finished. Outputs written to {o_path}.")
 
 
 def parse_args() -> argparse.Namespace:
