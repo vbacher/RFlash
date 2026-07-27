@@ -123,13 +123,62 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
     params.image_size_polar = (np.asarray(stack.shape[:-1]) * 1.1).astype(np.int16)
     params.image_size_cartesian = np.asarray(stack.shape[:-1]).astype(np.int16)
 
+    # resample ttp simulation space. After resampling it can be used similar to linear probe data.
     stack_sim = resample_to_simulation_space(stack, geometry, params)
 
-    # FIXME: continue here
-    data_orig = data.copy()
-    data = dataset.resample_to_simulation_space(data, geometries, params)
-    vol_mask = dataset.resample_to_image_space(np.ones_like(data, dtype=bool), geometries, params).astype(bool)
-    stack = standardize_volume(stack, params.init_values[1])
+    vol_mask = resample_to_image_space(np.ones_like(stack, dtype=bool), geometry, params).astype(bool)
+
+    stack_sim = standardize_volume(stack_sim, params.init_values[1])
+
+    # create traiings dataset
+    dataset = Dataset_2D_lin_array(stack=stack_sim)
+
+    # initialize models
+    pose_model = SlicePoses(dataset.get_localization())
+    representation_model = ExplicitRepresentation(
+        volume_shape=stack_sim.shape,
+        constant_init_values=params.init_values,
+    )
+    render_model = Render_engine(
+        image_size_polar=dataset.sh.frame_size_cart_pix,
+        constant_init_values=params.init_values,
+        compression=params.compression,
+    )
+
+    # train decomposition model
+    loss, l2, ssim = train_model(
+        representation_model=representation_model,
+        pose_model=pose_model,
+        render_model=render_model,
+        data=dataset,
+        training_params=params,
+        device=device,
+    )
+
+    if not args.silent:
+        visualize_stats(loss, l2, ssim, output_dir=output_dir.joinpath("training_stats"))
+
+    # Obtain shadow reduced volume from the trained model
+    shadow_reduced, _ = render_volume(
+        representation_model=representation_model,
+        pose_model=pose_model,
+        render_model=render_model,
+        dataset=dataset,
+        batch_size=params.params_generator["batch_size"],
+    )
+
+    shadow_reduced = resample_to_image_space(shadow_reduced, geometry, params)
+
+    save_volume(
+        volume=to_8bit_graysacle(shadow_reduced, volume_mask=vol_mask),
+        file_path=output_dir.joinpath("shadow_removed", "shadow_reduced_volume.nii.gz"),
+        header=get_medpy_header(),
+    )
+    save_volume(
+        volume=to_8bit_graysacle(stack, volume_mask=vol_mask),
+        file_path=output_dir.joinpath("shadow_removed", "original_volume.nii.gz"),
+        header=get_medpy_header(),
+    )
 
 
 def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> None:
@@ -257,4 +306,5 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    np.random.seed(10)
     run_demo(parse_args())

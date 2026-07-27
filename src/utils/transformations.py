@@ -165,7 +165,7 @@ def resample_to_simulation_space(
 def resample_to_image_space(
     data: np.ndarray, geometries: list[SliceTransducerGeometry], params: Parameter_Demo2D_curvylinear
 ) -> np.ndarray:
-    cart_shape = tuple(params.get("image_size_cart", _infer_cart_shape_from_geometries(geometries)))
+    cart_shape = tuple(params.image_size_cartesian)
     resampled = []
     for i, geometry in enumerate(geometries):
         slice_sim = np.asarray(data[..., i], dtype=np.float32)

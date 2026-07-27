@@ -7,6 +7,9 @@ from src.utils.transformations import rotmat_from_euler
 from src._datatypes import VolumeTransducerGeometry
 from src.trainings_params import Parameter_Demo3D
 
+# FIXME:remove
+from src.utils.visualization import visualize_2d_image
+
 
 class Dataset_3D_volume(data.Dataset):
     def __init__(

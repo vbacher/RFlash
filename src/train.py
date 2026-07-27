@@ -12,7 +12,7 @@ from src.model.representation import SlicePoses
 from src.model.representation import ExplicitRepresentation
 from src.model.rendering import Render_engine
 from src.model.losses import L2SSIMLoss
-from src.trainings_params import Parameter_Demo3D
+from src.trainings_params import Parameter_Demo3D, Parameter_Demo2D_curvylinear, Parameter_Demo2D_linear
 
 ###### body ######
 
@@ -22,7 +22,7 @@ def train_model(
     pose_model: SlicePoses,
     render_model: Render_engine,
     data: Dataset_3D_volume | Dataset_2D_lin_array,
-    training_params: Parameter_Demo3D,
+    training_params: Parameter_Demo3D | Parameter_Demo2D_curvylinear | Parameter_Demo2D_linear,
     device: torch.device,
 ) -> tuple[list[float], list[float], list[float]]:
     """Training function for RFlash model
