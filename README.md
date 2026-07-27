@@ -1,8 +1,24 @@
 # RFlash
 
+### [Project Page](https://vbacher.github.io/RFlash-ultrasound/) | [Paper]
+
 RFlash is the official public demonstration repository for shadow reduction in ultrasound imaging using differentiable simulation and radiance field decomposition.
 
 This repository is intentionally curated for release. It contains the code needed to load supported demo data, estimate scanner geometry, train the RFlash decomposition model, and save shadow-reduced image volumes.
+
+## TL;DR quickstart
+
+To setup the python environment and run the fetal brain demo:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt 
+python demo.py \
+  --dataset fetal_brain \
+  --input data/fetal_brain/test_3d.nii.gz \
+  --output outputs/fetal_brain
+```
 
 ## Method Overview
 
