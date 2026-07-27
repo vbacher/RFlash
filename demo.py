@@ -3,37 +3,42 @@
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
-from networkx import volume
 import numpy as np
 import torch
 
-from src.utils.transducer_geometry import estimate_scanner_geometry_volume, estimate_scanner_geometries_stack
+from src.datasets import Dataset_2D_lin_array, Dataset_3D_volume
+from src.model.rendering import Render_engine
+from src.model.representation import ExplicitRepresentation, SlicePoses
+from src.shadow_reduction import render_volume
+from src.train import train_model
+from src.trainings_params import (
+    Parameter_Demo2D_curvylinear,
+    Parameter_Demo2D_linear,
+    Parameter_Demo3D,
+)
 from src.utils.io import (
+    get_medpy_header,
     load_image_directory,
     load_synthetic_liver,
     load_volume,
     save_volume,
     to_8bit_graysacle,
-    get_medpy_header,
 )
-from src.utils.transformations import standardize_volume, resample_to_simulation_space, resample_to_image_space
-from src.datasets import Dataset_3D_volume, Dataset_2D_lin_array
-from src.model.representation import SlicePoses, ExplicitRepresentation
-from src.model.rendering import Render_engine
-from src.shadow_reduction import render_volume
-
-from src.trainings_params import Parameter_Demo3D, Parameter_Demo2D_curvylinear, Parameter_Demo2D_linear
-from src.train import train_model
-
-from src.utils.visualization import visualize_stats
+from src.utils.transducer_geometry import (
+    estimate_scanner_geometries_stack,
+    estimate_scanner_geometry_volume,
+)
+from src.utils.transformations import (
+    resample_to_image_space,
+    resample_to_simulation_space,
+    standardize_volume,
+)
 
 # FIXME:remove
-from src.utils.visualization import visualize_2d_image
-
+from src.utils.visualization import visualize_stats
 
 DATASET_CHOICES = ("fetal_brain", "abdominal", "synthetic_liver")
 
@@ -274,17 +279,14 @@ def parse_args() -> argparse.Namespace:
         "-i",
         "--input",
         type=Path,
-        # default=Path("data/fetal_brain/test_3d.nii.gz"),
-        default="/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images/train",
-        # default=Path("/home/scratch/valher/data/RFlash-demo/syn_liver"),
+        default=Path("data/fetal_brain/test_3d.nii.gz"),
         help="Input .mha file, image directory, .npy file, or .npy directory.",
     )
     parser.add_argument(
         "-d",
         "--dataset",
         choices=DATASET_CHOICES,
-        # default="fetal_brain",
-        default="abdominal",
+        default="fetal_brain",
         help="Dataset format to load.",
     )
     parser.add_argument(
@@ -306,5 +308,4 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    np.random.seed(10)
     run_demo(parse_args())

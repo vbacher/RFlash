@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
-
 from glob import glob
+from pathlib import Path
+from typing import Any
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from medpy.io.header import Header
 from medpy.io.load import load

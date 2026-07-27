@@ -1,6 +1,6 @@
+import cv2
 import numpy as np
 import torch
-import cv2
 
 from src._datatypes import SliceTransducerGeometry
 from src.trainings_params import Parameter_Demo2D_curvylinear

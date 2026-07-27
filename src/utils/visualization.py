@@ -1,10 +1,11 @@
 from __future__ import annotations
+
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-import torch
 from pathlib import Path
-from typing import Sequence
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 # FIXME: Remove this global counter in final version which is publicly released. This is only for debugging and visualization of intermediate results.
 ctr = 0

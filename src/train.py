@@ -6,13 +6,15 @@ import torch
 from tqdm import tqdm
 
 ## project imports
-
-from src.datasets import Dataset_3D_volume, Dataset_2D_lin_array
-from src.model.representation import SlicePoses
-from src.model.representation import ExplicitRepresentation
-from src.model.rendering import Render_engine
+from src.datasets import Dataset_2D_lin_array, Dataset_3D_volume
 from src.model.losses import L2SSIMLoss
-from src.trainings_params import Parameter_Demo3D, Parameter_Demo2D_curvylinear, Parameter_Demo2D_linear
+from src.model.rendering import Render_engine
+from src.model.representation import ExplicitRepresentation, SlicePoses
+from src.trainings_params import (
+    Parameter_Demo2D_curvylinear,
+    Parameter_Demo2D_linear,
+    Parameter_Demo3D,
+)
 
 ###### body ######
 
@@ -65,7 +67,7 @@ def train_model(
     losses = []
     l2s = []
     ssims = []
-    print(f"\nStart training model.\n")
+    print("\nStart training model.\n")
     for epoch in tqdm(range(training_params.max_epochs), desc="Train Model"):
 
         # metrics for tracking

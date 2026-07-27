@@ -1,8 +1,10 @@
 ###### imports ######
 
+import sys
+
 import numpy as np
 import torch
-import sys
+
 from src.utils.transformations import transform_slice
 from src.utils.visualization import visualize_vol
 
@@ -180,7 +182,7 @@ class SliceHandler:
         if source_pos_tilt_pix is None:
             self.source_pos_tilt_pix = np.asarray(source_pos_slice_pix)
             print(
-                f"not specifying source_pos_pivot is depricated. please specity explicitly",
+                "not specifying source_pos_pivot is depricated. please specity explicitly",
                 file=sys.stderr,
             )
         else:
@@ -426,7 +428,7 @@ class SliceHandlerLinearProbe:
             torch.Tensor: Cartesian coordinates of all slices. Shape (batch, r_range, phi_range, 3)
         """
         bs = aff_trans_mat.shape[0]
-        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, f"Shaoe mismatch. The input must be of shape (bs,4,4)."
+        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, "Shaoe mismatch. The input must be of shape (bs,4,4)."
         device = aff_trans_mat.device
 
         # get slice coords in pix
@@ -453,7 +455,7 @@ def trilinear_interpolation(
     """
 
     coord_array_shape = coord_array.shape
-    assert len(coord_array_shape) == 4, f"Most likely batch dimension missing"
+    assert len(coord_array_shape) == 4, "Most likely batch dimension missing"
     assert len(volume_array.shape) == 4, "Most likely list dimension missing."
     volume_array = volume_array.to(device=coord_array.device)
 
@@ -578,7 +580,7 @@ def pseudo_inverse_trilinear_interpolation(
             (coords[:, 0] - x_floor) * (y_ceil - coords[:, 1]) * (coords[:, 2] - z_floor),
             (x_floor - coords[:, 0]) * (coords[:, 1] - y_floor) * (coords[:, 2] - z_ceil),
         ]
-    ).reshape((values.shape[0] * 8))
+    ).reshape(values.shape[0] * 8)
 
     # multipy values
     values = torch.cat([values[:, None] for i in range(8)], dim=1).flatten()
@@ -662,7 +664,7 @@ def pseudo_inverse_bilinear_interpolation(
             (coords[:, 0] - x_floor) * (y_ceil - coords[:, 1]),
             (coords[:, 0] - x_floor) * (coords[:, 1] - y_floor),
         ]
-    ).reshape((values.shape[0] * 4))
+    ).reshape(values.shape[0] * 4)
 
     # multipy values
     values = torch.cat([values[:, None] for i in range(4)], dim=1).flatten()
@@ -706,7 +708,7 @@ def bilinear_interpolation_stack(coord_array: torch.Tensor, stack: torch.Tensor,
     """
 
     coord_array_shape = coord_array.shape
-    assert len(coord_array_shape) == 4, f"Most likely batch dimension missing"
+    assert len(coord_array_shape) == 4, "Most likely batch dimension missing"
     assert len(stack.shape) == 4, "Most likely list dimension missing."
     stack_shape = torch.tensor(stack.shape[:3])
 

@@ -1,16 +1,18 @@
 ###### imports ######
 
 ## library imports
+import numpy as np
 import torch
 from matplotlib.image import imsave
 from scipy.ndimage import binary_erosion
-import numpy as np
 
-## project imports
-from src.utils.visualization import visualize_2d_image, visualize_vol
+from src.utils.geometry import (
+    pseudo_inverse_bilinear_interpolation,
+    pseudo_inverse_trilinear_interpolation,
+)
 from src.utils.io import save_img, to_8bit_graysacle
 
-from src.utils.geometry import pseudo_inverse_bilinear_interpolation, pseudo_inverse_trilinear_interpolation
+## project imports
 
 ###### body ######
 
@@ -30,7 +32,7 @@ class Render_engine(torch.nn.Module):
             frequency (float, optional): frenquency used for rendering. Defaults to 2.5.
         """
 
-        super(Render_engine, self).__init__()
+        super().__init__()
 
         self.image_size_polar = image_size_polar
         self.freqency = frequency

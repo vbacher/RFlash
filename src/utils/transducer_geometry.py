@@ -9,21 +9,19 @@ support.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
+from sys import stderr
 
 import matplotlib.pyplot as plt
 import numpy as np
-from sys import stderr
 from cv2 import Canny, HoughLinesP
 
 # project imports
 from src._datatypes import SliceTransducerGeometry, VolumeTransducerGeometry
 
 # FIXME: remove this import
-from src.utils.visualization import visualize_2d_image
 
 
 def get_intersect(points: np.ndarray) -> tuple[float, float]:
@@ -529,7 +527,7 @@ def estimate_scanner_geometries_stack(
     successful_indices = []
     for i in random_selection:
         slice_image = stack_array[i]
-        overlay_path = Path(overlay_dir) / f"geometry_slice.png" if overlay_dir else None
+        overlay_path = Path(overlay_dir) / "geometry_slice.png" if overlay_dir else None
         geometry, success = estimate_geometry_slice(
             slice_image,
             spacing_plane_mm=spacing,

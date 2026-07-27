@@ -1,18 +1,16 @@
 ###### imports ######
 
 ## library imports
-import torch
+from collections.abc import Sequence
+
 import numpy as np
-from typing import Sequence
-import torch.nn as nn
-from torch import Tensor, device, tensor, float32
-from src.utils.transformations import rotmat_from_euler
+import torch
+from torch import Tensor, device, float32, nn, tensor
 
 ## project imports
 from src.model.initialization import Normal_initialization
-from src.datasets import Dataset_3D_volume, Dataset_2D_lin_array
-from src.utils.geometry import trilinear_interpolation, bilinear_interpolation_stack
-
+from src.utils.geometry import bilinear_interpolation_stack, trilinear_interpolation
+from src.utils.transformations import rotmat_from_euler
 
 ###### body ######
 
@@ -30,7 +28,7 @@ class SlicePoses(nn.Module):
             learn_R (bool, optional): Define if rotations are set trainable. Defaults to True.
             learn_t (bool, optional): Define if translations are trainable. Defaults to True.
         """
-        super(SlicePoses, self).__init__()
+        super().__init__()
         thetas = pose[0]
         Ts = pose[1]
         self.scale_mat = nn.Parameter(
@@ -87,7 +85,7 @@ class ExplicitRepresentation(torch.nn.Module):
             dataset (Dataset_3D_volume | None, optional): Dataset object. Defaults to None.
         """
 
-        super(ExplicitRepresentation, self).__init__()
+        super().__init__()
 
         # set model variables
         self.dim_vol = len(volume_shape)

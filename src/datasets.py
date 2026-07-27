@@ -1,14 +1,18 @@
+import numpy as np
 import torch
 from torch.utils import data
-import numpy as np
 
-from src.utils.geometry import VolumeHandler, SliceHandler, StackHandler, SliceHandlerLinearProbe
-from src.utils.transformations import rotmat_from_euler
 from src._datatypes import VolumeTransducerGeometry
 from src.trainings_params import Parameter_Demo3D
+from src.utils.geometry import (
+    SliceHandler,
+    SliceHandlerLinearProbe,
+    StackHandler,
+    VolumeHandler,
+)
+from src.utils.transformations import rotmat_from_euler
 
 # FIXME:remove
-from src.utils.visualization import visualize_2d_image
 
 
 class Dataset_3D_volume(data.Dataset):
@@ -153,7 +157,6 @@ class Dataset_3D_volume(data.Dataset):
             aff_trans_mat (torch.Tensor): Pre transform
         """
         self.aff_pre_trans = aff_trans_mat
-        return
 
 
 class Dataset_2D_lin_array(data.Dataset):
@@ -244,4 +247,3 @@ class Dataset_2D_lin_array(data.Dataset):
             aff_trans_mat (torch.Tensor): Pre transform
         """
         self.aff_pre_trans = aff_trans_mat
-        return

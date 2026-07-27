@@ -4,12 +4,10 @@
 import numpy as np
 import torch
 
-
 ## project imports
-from src.datasets import Dataset_3D_volume, Dataset_2D_lin_array
-from src.model.representation import ExplicitRepresentation, SlicePoses
+from src.datasets import Dataset_2D_lin_array, Dataset_3D_volume
 from src.model.rendering import Render_engine
-
+from src.model.representation import ExplicitRepresentation, SlicePoses
 
 ###### body ######
 
@@ -71,7 +69,7 @@ def _accumulate_inverse_trilinear(
             (coords[:, 0] - x_floor) * (y_ceil - coords[:, 1]) * (coords[:, 2] - z_floor),
             (x_floor - coords[:, 0]) * (coords[:, 1] - y_floor) * (coords[:, 2] - z_ceil),
         ]
-    ).reshape((values.shape[0] * 8))
+    ).reshape(values.shape[0] * 8)
 
     values = torch.cat([values[:, None] for _ in range(8)], dim=1).flatten()
 

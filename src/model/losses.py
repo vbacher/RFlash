@@ -1,11 +1,10 @@
 ###### imports ######
 
 import torch
-from torchmetrics.image import StructuralSimilarityIndexMeasure
 from torch.nn import MSELoss
+from torchmetrics.image import StructuralSimilarityIndexMeasure
 
 # FIXME: remove in final version. ONly for debugging
-from src.utils.visualization import visualize_vol
 
 ###### body ######
 
@@ -19,7 +18,7 @@ class L2SSIMLoss(torch.nn.Module):
             device (_type_, optional): Execution device. Defaults to torch.device('cpu').
         """
 
-        super(L2SSIMLoss, self).__init__()
+        super().__init__()
 
         self.mse = MSELoss()
         self.metric_ssim = StructuralSimilarityIndexMeasure().to(device=device)
