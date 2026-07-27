@@ -1,22 +1,21 @@
 # RFlash
 
-RFlash is the public demonstration repository for shadow reduction in ultrasound imaging using differentiable simulation and radiance field decomposition.
+RFlash is the official public demonstration repository for shadow reduction in ultrasound imaging using differentiable simulation and radiance field decomposition.
 
-This repository is intentionally smaller than the research codebase. It currently focuses on the first reproducible step needed by the method: loading example ultrasound data and estimating the scanner fan geometry from the image support.
+This repository is intentionally curated for release. It contains the code needed to load supported demo data, estimate scanner geometry, train the RFlash decomposition model, and save shadow-reduced image volumes.
 
 ## Method Overview
 
-Curvilinear ultrasound images are formed by a virtual acoustic source and a fan-shaped field of view. RFlash uses this scanner geometry to model how ultrasound rays travel through the image volume before estimating and reducing acoustic shadows.
+RFlash represents ultrasound data with two explicit parameter maps: attenuation and scatter. The differentiable renderer samples these maps along estimated ultrasound scanlines, applies exponential attenuation, time-gain compensation, and log compression, then compares the rendered slices to the observed ultrasound data. After optimization, the representation can be rendered without the attenuation term to produce a shadow-reduced volume or stack.
 
-The current public demo estimates that geometry by:
+At a high level, the demo:
 
-1. Loading a 3D fetal brain volume, a stack of abdominal ultrasound images, or synthetic liver ultrasound arrays.
-2. Separating the fan-shaped foreground from the dark background.
-3. Tracing the left and right fan boundaries in a representative slice.
-4. Fitting two boundary lines and intersecting them to estimate the virtual point source.
-5. Saving an overlay so the estimated source and fan boundaries can be inspected.
-
-For a 3D volume, the demo estimates geometry from the two middle planes of the volume.
+1. Loads a fetal brain 3D ultrasound volume, abdominal ultrasound image stack, or synthetic liver image stack.
+2. Estimates the scanner geometry for curvilinear data from the visible fan-shaped image support.
+3. Resamples curvilinear 2D images into the renderer's simulation space when needed.
+4. Trains the explicit attenuation/scatter representation with a combined L2 and SSIM loss.
+5. Renders the trained representation without shadowing.
+6. Saves the original and shadow-reduced outputs as medical image volumes.
 
 ## Repository Structure
 
@@ -28,16 +27,30 @@ RFlash/
 ├── demo.py
 ├── data/
 │   └── fetal_brain/
-│       └── fetal-brain-demo.mha
+│       ├── fetal-brain-demo.mha
+│       └── test_3d.nii.gz
 └── src/
-    ├── __init__.py
-    ├── geometry.py
-    └── utils.py
+    ├── _datatypes.py
+    ├── datasets.py
+    ├── shadow_reduction.py
+    ├── train.py
+    ├── trainings_params.py
+    ├── model/
+    │   ├── initialization.py
+    │   ├── losses.py
+    │   ├── rendering.py
+    │   └── representation.py
+    └── utils/
+        ├── geometry.py
+        ├── io.py
+        ├── transducer_geometry.py
+        ├── transformations.py
+        └── visualization.py
 ```
 
 ## Installation
 
-Create a Python environment and install the small dependency set:
+Create and activate a Python environment, then install the dependencies:
 
 ```bash
 python -m venv .venv
@@ -45,19 +58,38 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The demo has been developed with Python 3.11. It uses NumPy for estimation, matplotlib for overlays and simple image loading, and MedPy for `.mha` volume I/O.
+The code has been developed for Python 3.11. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU.
+
+## Dependencies
+
+The public demo uses:
+
+- NumPy for array operations.
+- PyTorch for optimization and differentiable rendering.
+- TorchMetrics for SSIM.
+- OpenCV for fan-geometry estimation and curvilinear resampling.
+- MedPy for medical image I/O.
+- SciPy for diagnostic morphology utilities.
+- Matplotlib for image loading, overlays, and training plots.
+- tqdm for training progress bars.
+
+No tracking software, experiment database, or private infrastructure is required.
 
 ## Data
 
 ### Fetal Brain
 
-A small fetal brain 3D ultrasound volume is included at:
+A small fetal brain 3D ultrasound example is included under:
 
 ```text
-data/fetal_brain/fetal-brain-demo.mha
+data/fetal_brain/
 ```
 
-This is the default input for `demo.py`.
+The command line default currently points to:
+
+```text
+data/fetal_brain/test_3d.nii.gz
+```
 
 ### Abdominal Ultrasound
 
@@ -65,11 +97,13 @@ Download the US simulation and segmentation dataset from Kaggle:
 
 [US simulation & segmentation](https://www.kaggle.com/datasets/ignaciorlando/ussimandsegm)
 
-Use the real ultrasound image directory as input. For example:
+Use the real ultrasound image directory as input. In the development setup this was:
 
 ```text
 /home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images
 ```
+
+The current loader reads `.jpg` files from the provided directory.
 
 ### Synthetic Liver Ultrasound
 
@@ -77,7 +111,7 @@ Download the synthetic testing data from the Ultra-NeRF repository:
 
 [Synthetic liver ultrasound](https://github.com/magdalena-wysocki/ultra-nerf/tree/main/data/synthetic_testing)
 
-The demo supports a directory containing files such as:
+The demo supports either a single `.npy` file or a directory containing compatible `.npy` files such as:
 
 ```text
 images-l2.npy
@@ -91,11 +125,11 @@ Run the packaged fetal brain example:
 ```bash
 python demo.py \
   --dataset fetal_brain \
-  --input data/fetal_brain/fetal-brain-demo.mha \
+  --input data/fetal_brain/test_3d.nii.gz \
   --output outputs/fetal_brain
 ```
 
-Run abdominal ultrasound geometry estimation:
+Run abdominal ultrasound:
 
 ```bash
 python demo.py \
@@ -104,7 +138,7 @@ python demo.py \
   --output outputs/abdominal
 ```
 
-Run synthetic liver geometry estimation:
+Run synthetic liver ultrasound:
 
 ```bash
 python demo.py \
@@ -113,25 +147,34 @@ python demo.py \
   --output outputs/synthetic_liver
 ```
 
-When run from an interactive terminal, the demo shows the geometry overlay and asks whether the source was found correctly. To save overlays without opening windows or asking for confirmation, use:
+Use `--silent` to suppress non-essential plots and intermediate training-statistic visualization:
 
 ```bash
-python demo.py --no-confirm-geometry --no-show-overlay
+python demo.py --dataset fetal_brain --input data/fetal_brain/test_3d.nii.gz --output outputs/fetal_brain --silent
 ```
+
+For abdominal stacks, the script asks how many slices to process because scanner-geometry estimation can require manual inspection when the fan edges are unclear.
 
 ## Expected Outputs
 
-The output directory contains:
+Each demo writes outputs below the directory passed with `--output`.
 
-- `geometry.json`: estimated source location, radius range, and fan angle.
-- `geometry_coronal_middle.png` and `geometry_axial_middle.png` for 3D volumes.
-- `geometry_abdominal_middle.png` or `geometry_synthetic_liver_middle.png` for 2D image stacks.
+```text
+outputs/<dataset>/
+├── intermediate_images/
+│   └── geometry_*.png
+├── training_stats/
+│   └── training_stats.png
+└── shadow_removed/
+    ├── original_volume.nii.gz
+    └── shadow_reduced_volume.nii.gz
+```
 
-The overlay marks the estimated source with a red cross and draws the fitted fan boundaries over the slice.
+`training_stats.png` is written only when `--silent` is not used. The saved volumes contain 8-bit grayscale versions of the original and shadow-reduced data.
 
-## Current Scope
+## Model Weights
 
-This repository is being curated for public release. The current implementation demonstrates data loading and scanner geometry estimation. The full shadow-reduction pipeline will be added only after the public version is simplified and documented enough to be reproducible.
+No pretrained model weights are required. The demo trains the explicit representation from the input data using the parameters in `src/trainings_params.py`.
 
 ## Citation
 
@@ -149,8 +192,10 @@ Update this entry with the final publication details once available.
 
 ## License
 
-See [LICENSE](LICENSE).
+This repository is distributed under the terms described in [LICENSE](LICENSE).
 
 ## Contact
 
-For questions about the public RFlash demo, contact Valentin Bacher.
+Valentin Bacher
+valentin.bacher@cs.ox.ac.uk
+OMNI Lab, Department of Computer Science, University of Oxford

@@ -1,6 +1,22 @@
-###### imports ######
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Differentiable ultrasound renderer used to train and re-render the RFlash
+    attenuation/scatter representation.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
 
-## library imports
 import numpy as np
 import torch
 from matplotlib.image import imsave
@@ -12,12 +28,16 @@ from src.utils.geometry import (
 )
 from src.utils.io import save_img, to_8bit_graysacle
 
-## project imports
-
-###### body ######
-
 
 class Render_engine(torch.nn.Module):
+    """Differentiable renderer for ultrasound slices.
+
+    The renderer expects two parameter maps per sampled point: attenuation
+    ``alpha`` and scatter ``phi``. It models exponential signal decay along the
+    scanline, applies a fixed time-gain compensation curve, and finally applies
+    logarithmic compression.
+    """
+
     def __init__(
         self,
         image_size_polar: list | np.ndarray,
@@ -25,11 +45,16 @@ class Render_engine(torch.nn.Module):
         compression: float = 1e-4,
         frequency: float = 20,  # 3.9 / 0.05, with alpha = 0.5
     ) -> None:
-        """Constructor of render engine
+        """Initialize renderer constants.
 
         Args:
-            image_size_polar (list): Image dimensions of slices in polar coordinates
-            frequency (float, optional): frenquency used for rendering. Defaults to 2.5.
+            image_size_polar: Slice dimensions in simulation coordinates as
+                ``(radial_samples, angular_samples)``.
+            constant_init_values: Initialization constants; the first value is
+                used to define the fixed time-gain compensation profile.
+            compression: Log-compression parameter.
+            frequency: Effective rendering frequency used in the attenuation
+                integral.
         """
 
         super().__init__()
@@ -37,7 +62,9 @@ class Render_engine(torch.nn.Module):
         self.image_size_polar = image_size_polar
         self.freqency = frequency
 
-        # define time gain compensation
+        # The TGC profile is fixed, not learned. It compensates the renderer's
+        # depth-dependent attenuation so the trainable maps can focus on
+        # attenuation/scatter decomposition.
         alpha_prototype = torch.full(size=(1, image_size_polar[0]), fill_value=constant_init_values[0])[0]
         TGC = torch.cumsum(alpha_prototype / alpha_prototype.shape[0] * self.freqency, dim=0)
 
@@ -45,52 +72,45 @@ class Render_engine(torch.nn.Module):
         self.compression = torch.nn.Parameter(torch.tensor(compression), requires_grad=False)
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
-        """Performs rendering for two parameter maps
+        """Render ultrasound slices from attenuation and scatter maps.
 
         Args:
-            input_tensor (torch.Tensor): Input tensor containing parameter maps of shape (batch size, H, W, 2)
+            input_tensor: Parameter maps with shape ``(batch, height, width, 2)``.
 
         Returns:
-            torch.Tensor: Rendered slices of shape (batch size, H, W)
+            Rendered slices with shape ``(batch, height, width)``.
         """
 
         bs = input_tensor.shape[0]
 
-        # extract parameter maps
         alpha_t = input_tensor[:, :, :, 0]
-        # self.visualize_fan_slice(alpha_t, "attenuation")
         phi_t = input_tensor[:, :, :, 1]
-        # self.visualize_fan_slice(phi_t, "scatter")
 
-        # signal decay after Labert-Beers-Law
+        # Shift the cumulative integral by one sample so that attenuation at a
+        # given depth affects subsequent samples rather than itself.
         Integral = torch.cumsum((alpha_t) * self.freqency / alpha_t.shape[1], dim=1)
         Integral[:, 1:, :] = Integral[:, :-1, :].clone()
         Integral[:, 0, :] = 0
         I_t = torch.exp(-Integral)
-        # self.visualize_fan_slice(I_t, "intensity")
 
-        # decay scatter
         render = I_t * phi_t
-        # self.visualize_fan_slice(render, "measured")
 
-        # apply TGC
         TGC = torch.tile(torch.exp(self.TGC).reshape(-1, 1), (bs, 1, self.image_size_polar[1]))
         render = TGC * render
-        # self.visualize_fan_slice(render, "a_tgc")
 
         render = self.log_compression(render)
-        # self.visualize_fan_slice(render, "a_log")
 
         return render
 
     def rend_wo_shadow(self, input_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Performs shadow avoiding rendering for two parameter maps.
+        """Render slices without attenuation and estimate the shadow mask.
 
         Args:
-            input_tensor (torch.Tensor): Input tensor containing parameter maps of shape (batch size, H, W, 2)
+            input_tensor: Parameter maps with shape ``(batch, height, width, 2)``.
 
         Returns:
-            tuple[torch.Tensor,torch.Tensor]: Rendered shadow free slices of shape (batch size, H, W) as well as a shadow probability map.
+            Tuple ``(shadow_free_render, shadow_probability)`` with both tensors
+            shaped ``(batch, height, width)``.
         """
 
         bs = input_tensor.shape[0]
@@ -108,17 +128,34 @@ class Render_engine(torch.nn.Module):
         TGC = torch.tile(torch.exp(self.TGC).reshape(-1, 1), (bs, 1, self.image_size_polar[1]))
         probab_map = 1 - torch.exp(-1 * TGC * I_t)
 
-        # log compression
         render = self.log_compression(render)
 
         return render, probab_map
 
     def log_compression(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply logarithmic compression to simulated intensities.
+
+        Args:
+            x: Non-negative intensity tensor.
+
+        Returns:
+            Log-compressed tensor with the same shape as ``x``.
+        """
+
         return torch.log(1 + torch.abs(self.compression) * x) / torch.log(
             1 + torch.abs(self.compression)
         )  # Wein, 2008
 
     def inverse_log_compression(self, x: torch.Tensor) -> torch.Tensor:
+        """Invert :meth:`log_compression` for a compressed intensity tensor.
+
+        Args:
+            x: Log-compressed tensor.
+
+        Returns:
+            Tensor in the renderer's uncompressed intensity domain.
+        """
+
         return (torch.pow(torch.full_like(x, self.compression + 1), x) - 1) / self.compression
 
     def save_stage_maps(
@@ -128,6 +165,17 @@ class Render_engine(torch.nn.Module):
         vol_shape: torch.Tensor,
         pixel_spacing: torch.Tensor,
     ) -> None:
+        """Save intermediate renderer maps for one batch of slices.
+
+        Args:
+            param_maps: Parameter maps with shape ``(batch, height, width, 2)``.
+            slice_coords: Cartesian sample coordinates for the same batch.
+            vol_shape: Target simulation-space volume shape.
+            pixel_spacing: Pixel spacing used for image aspect ratio.
+
+        Returns:
+            None. Images are written to ``./output``.
+        """
 
         slice_coords = torch.cat(
             [
@@ -140,14 +188,13 @@ class Render_engine(torch.nn.Module):
 
         bs = param_maps.shape[0]
 
-        # extract parameter maps
         alpha_t = param_maps[:, :, :, 0]
-        # Ensure the output of pseudo_inverse_bilinear_interpolation is used or validated
         self.__save_simulation_space_slice(alpha_t, slice_coords, vol_shape, pixel_spacing, "./output", "alpha")
         phi_t = param_maps[:, :, :, 1]
         self.__save_simulation_space_slice(phi_t, slice_coords, vol_shape, pixel_spacing, "./output", "phi")
 
-        # signal decay after Labert-Beers-Law
+        # Keep the stage computation identical to ``forward`` so saved maps can
+        # be compared directly against rendered training batches.
         Integral = torch.cumsum((alpha_t) * self.freqency / alpha_t.shape[1], dim=1)
         Integral[:, 1:, :] = Integral[:, :-1, :].clone()
         Integral[:, 0, :] = 0
@@ -202,6 +249,8 @@ class Render_engine(torch.nn.Module):
         )
 
     def __save_simulation_space_slice(self, slice, slice_coords, vol_shape, pixel_spacing, o_path, f_name):
+        """Project and save one simulation-space slice map as a PNG image."""
+
         out = pseudo_inverse_bilinear_interpolation(
             slice_coords,
             vol_shape + [1],
@@ -216,6 +265,16 @@ class Render_engine(torch.nn.Module):
         )
 
     def visualize_fan_slice(self, fan: torch.Tensor, title="out") -> None:
+        """Save a diagnostic visualization of fan slices in volume space.
+
+        Args:
+            fan: Fan-space tensor with shape ``(num_slices, height, width)``.
+            title: Output filename stem in the ``debugging`` directory.
+
+        Returns:
+            None.
+        """
+
         device = fan.device
 
         # get index of example slice

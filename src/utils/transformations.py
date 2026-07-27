@@ -1,3 +1,22 @@
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Coordinate transformations and image resampling utilities used to move
+    between Cartesian image space and RFlash simulation space.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
+
 import cv2
 import numpy as np
 import torch
@@ -7,6 +26,17 @@ from src.trainings_params import Parameter_Demo2D_curvylinear
 
 
 def standardize_volume(volume: np.ndarray, mean: float, mask: np.ndarray | None = None) -> np.ndarray:
+    """Standardize foreground intensities around the renderer initialization.
+
+    Args:
+        volume: Input image volume or stack.
+        mean: Desired foreground mean after standardization.
+        mask: Optional foreground mask. If omitted, non-zero voxels are treated
+            as foreground.
+
+    Returns:
+        ``float32`` array with negative standardized values clipped to zero.
+    """
 
     if mask is not None:
         volume_mask = mask
@@ -23,22 +53,24 @@ def standardize_volume(volume: np.ndarray, mean: float, mask: np.ndarray | None 
 
 
 def rotmat_from_euler(thetas: torch.Tensor) -> torch.Tensor:
-    """Gets 4X4 homogenious rotation matrices from euler angles.
+    """Create 4x4 homogeneous rotation matrices from Euler angles.
 
     Args:
-        thetas (torch.Tensor): Tensor containing n sets of eulerangels with rotations around x,y,z. Dimensions: (n,3)
+        thetas: Tensor with shape ``(n, 3)`` containing rotations around
+            ``x``, ``y``, and ``z`` in radians.
 
     Returns:
-        torch.tensor: retuns set of 4X4 rotations matrices. Dimensions: (n,3,3).
+        Tensor with shape ``(n, 4, 4)``.
     """
 
-    assert len(thetas.shape) == 2, "Most likly batch dimension missing."
-    assert thetas.shape[1] == 3, "Can only handel 3D rotations but got {thetas.shape[1]}D."
+    assert len(thetas.shape) == 2, "Most likely batch dimension missing."
+    assert thetas.shape[1] == 3, f"Can only handle 3D rotations but got {thetas.shape[1]}D."
     bs = thetas.shape[0]
     zero = torch.zeros((bs, 1), dtype=torch.float32, device=thetas.device)
     one = torch.ones((bs, 1), dtype=torch.float32, device=thetas.device)
 
-    # rotations around x
+    # The matrix order follows the original implementation: x rotation first,
+    # then y, then z via the final batched multiplication below.
     x = torch.cat(
         [
             one,
@@ -114,14 +146,15 @@ def rotmat_from_euler(thetas: torch.Tensor) -> torch.Tensor:
 
 
 def transform_slice(img_slice: torch.Tensor, aff_trans_mats: torch.Tensor) -> torch.Tensor:
-    """transforms coordinates of slice by applying affine transformation matrices
+    """Transform slice coordinates with batched affine matrices.
 
     Args:
-        img_slice (torch.Tensor): _description_
-        aff_trans_mats (torch.Tensor): _description_
+        img_slice: Coordinate tensor with shape
+            ``(batch, radial_samples, angular_samples, 3)``.
+        aff_trans_mats: Affine matrices with shape ``(batch, 4, 4)``.
 
     Returns:
-        torch.Tensor: _description_
+        Transformed coordinates with the same leading shape as ``img_slice``.
     """
     slice_shape = img_slice.shape
 
@@ -130,9 +163,10 @@ def transform_slice(img_slice: torch.Tensor, aff_trans_mats: torch.Tensor) -> to
     ), "image slice needs to be of shape (batch size, fan radial range, fan angular range, 3)"
     assert aff_trans_mats.shape == torch.Size(
         (slice_shape[0], 4, 4)
-    ), "The matrix arraz needs to be of shape (batch_size, 4, 4)."
+    ), "The matrix array needs to be of shape (batch_size, 4, 4)."
 
-    # get homogenious coordinates
+    # Homogeneous coordinates allow the same matrix multiplication to apply
+    # rotations and translations.
     transformed = torch.ones((*slice_shape[:3], 4)).to(device=img_slice.device)
     transformed[:, :, :, :3].copy_(img_slice)
 
@@ -145,6 +179,18 @@ def transform_slice(img_slice: torch.Tensor, aff_trans_mats: torch.Tensor) -> to
 def resample_to_simulation_space(
     data: np.ndarray, geometries: list[SliceTransducerGeometry], params: Parameter_Demo2D_curvylinear
 ) -> np.ndarray:
+    """Resample curvilinear image slices into polar simulation space.
+
+    Args:
+        data: Cartesian image stack with shape ``(height, width, num_slices)``.
+        geometries: Per-slice fan geometry estimates.
+        params: Demo parameters containing the target polar image size.
+
+    Returns:
+        Simulation-space stack with shape
+        ``(radial_samples, angular_samples, num_slices)``.
+    """
+
     polar_shape = params.image_size_polar
     resampled = []
     for i, geometry in enumerate(geometries):
@@ -165,6 +211,18 @@ def resample_to_simulation_space(
 def resample_to_image_space(
     data: np.ndarray, geometries: list[SliceTransducerGeometry], params: Parameter_Demo2D_curvylinear
 ) -> np.ndarray:
+    """Resample simulation-space slices back to Cartesian image space.
+
+    Args:
+        data: Simulation-space stack with shape
+            ``(radial_samples, angular_samples, num_slices)``.
+        geometries: Per-slice fan geometry estimates.
+        params: Demo parameters containing the target Cartesian image size.
+
+    Returns:
+        Cartesian image stack with shape ``(height, width, num_slices)``.
+    """
+
     cart_shape = tuple(params.image_size_cartesian)
     resampled = []
     for i, geometry in enumerate(geometries):
@@ -183,6 +241,8 @@ def resample_to_image_space(
 
 
 def _build_simulation_to_image_maps(geometry: SliceTransducerGeometry, polar_shape):
+    """Build OpenCV remap fields from polar simulation pixels to image pixels."""
+
     num_samples_per_scanline, num_scan_lines = polar_shape
     source_pix, r_min, r_max, phi_start, phi_delta = _compute_geometry_parameters(geometry)
 
@@ -199,6 +259,8 @@ def _build_simulation_to_image_maps(geometry: SliceTransducerGeometry, polar_sha
 def _build_image_to_simulation_maps(
     geometry: SliceTransducerGeometry, cart_shape: tuple[int, int], polar_shape: tuple[int, int]
 ):
+    """Build OpenCV remap fields from Cartesian image pixels to polar pixels."""
+
     height, width = cart_shape
     num_samples_per_scanline, num_scan_lines = polar_shape
     source_pix, r_min, r_max, phi_start, phi_delta = _compute_geometry_parameters(geometry)
@@ -234,6 +296,8 @@ def _build_image_to_simulation_maps(
 
 @staticmethod
 def _compute_geometry_parameters(geometry: SliceTransducerGeometry):
+    """Return fan source, radial range, and angular range in remap convention."""
+
     source_pix = np.asarray(geometry.source_pix, dtype=np.float32)
     ang_limits = np.asarray(geometry.angle_limit_points_pix, dtype=np.float32)
     r_range = np.asarray(geometry.radius_range_mm, dtype=np.float32)
@@ -249,6 +313,8 @@ def _compute_geometry_parameters(geometry: SliceTransducerGeometry):
 
 @staticmethod
 def _infer_cart_shape_from_geometries(geometries: list[SliceTransducerGeometry]) -> tuple[int, int]:
+    """Infer a Cartesian canvas large enough to contain all provided fan sectors."""
+
     max_y = 0.0
     max_x = 0.0
     for geometry in geometries:

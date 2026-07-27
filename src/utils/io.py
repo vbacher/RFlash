@@ -1,3 +1,22 @@
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    File I/O helpers for loading demo data, normalizing images, and saving
+    RFlash output volumes and diagnostic images.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
+
 from __future__ import annotations
 
 from glob import glob
@@ -11,11 +30,16 @@ from medpy.io.header import Header
 from medpy.io.load import load
 from medpy.io.save import save
 
-IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
-
-
 def get_medpy_header(spacing_mm: list[float] | np.ndarray | None = None) -> Header:
-    """Create a minimal MedPy header with voxel spacing for saved volumes."""
+    """Create a minimal MedPy header with voxel spacing for saved volumes.
+
+    Args:
+        spacing_mm: Optional voxel spacing in millimetres. Defaults to unit
+            spacing when omitted.
+
+    Returns:
+        MedPy header carrying the requested spacing.
+    """
 
     if spacing_mm is None:
         spacing_mm = [1.0, 1.0, 1.0]
@@ -24,13 +48,17 @@ def get_medpy_header(spacing_mm: list[float] | np.ndarray | None = None) -> Head
 
 
 def load_volume(file_path: str) -> tuple[np.ndarray, Header]:
-    """Load a 3D medical image volume from an ``.mha`` file.
+    """Load a 3D medical image volume from a supported file.
 
     Args:
-        file_path: Path to the input ``.mha`` file.
+        file_path: Path to an input ``.mha``, ``.nii``, or ``.nii.gz`` file.
 
     Returns:
         The image volume and its MedPy header.
+
+    Raises:
+        FileNotFoundError: If ``file_path`` does not exist.
+        ValueError: If the file extension or loaded dimensionality is unsupported.
     """
 
     path = Path(file_path)
@@ -49,13 +77,18 @@ def load_volume(file_path: str) -> tuple[np.ndarray, Header]:
 
 
 def load_image_directory(directory_path: str | Path) -> np.ndarray:
-    """Load a directory of 2D grayscale ultrasound images as a stack.
+    """Load a directory of 2D grayscale ultrasound ``.jpg`` images as a stack.
 
     Args:
         directory_path: Directory containing image files.
 
     Returns:
         A stack with shape ``(num_images, rows, columns)``.
+
+    Raises:
+        NotADirectoryError: If ``directory_path`` is not a directory.
+        FileNotFoundError: If no ``.jpg`` files are present.
+        ValueError: If images do not all share the same shape.
     """
 
     path = Path(directory_path)
@@ -102,7 +135,14 @@ def _read_grayscale_image(image_path: Path | str) -> np.ndarray:
 
 
 def normalize_for_display(image: np.ndarray) -> np.ndarray:
-    """Normalize an image or volume to the range ``[0, 1]`` for plotting."""
+    """Normalize an image or volume to the range ``[0, 1]`` for plotting.
+
+    Args:
+        image: Image or volume-like array.
+
+    Returns:
+        Floating-point array with the same shape as ``image``.
+    """
 
     image_array = np.asarray(image, dtype=float)
     finite_mask = np.isfinite(image_array)
@@ -128,6 +168,11 @@ def load_synthetic_liver(input_path: str | Path) -> np.ndarray:
 
     Returns:
         A stack with shape ``(num_images, rows, columns)``.
+
+    Raises:
+        FileNotFoundError: If the input path or requested ``.npy`` files are
+            missing.
+        ValueError: If loaded arrays do not contain compatible image stacks.
     """
 
     path = Path(input_path)
@@ -149,6 +194,16 @@ def load_synthetic_liver(input_path: str | Path) -> np.ndarray:
 
 
 def to_8bit_graysacle(image: Any, volume_mask: Any | None = None) -> np.ndarray:
+    """Convert an image or volume to ``uint8`` grayscale.
+
+    Args:
+        image: NumPy array or torch tensor.
+        volume_mask: Optional mask selecting foreground voxels/pixels for
+            mean-variance scaling. When omitted, min-max normalization is used.
+
+    Returns:
+        ``uint8`` array with the same spatial shape as ``image``.
+    """
 
     if torch.is_tensor(image):
         image = image.detach().cpu().numpy()
@@ -167,6 +222,19 @@ def to_8bit_graysacle(image: Any, volume_mask: Any | None = None) -> np.ndarray:
 
 
 def save_img(img, spacing_mm, o_path, f_name, title=None) -> None:
+    """Save a 2D image with physical aspect ratio.
+
+    Args:
+        img: 2D image array.
+        spacing_mm: Pixel spacing as ``(row_spacing, column_spacing)``.
+        o_path: Output directory.
+        f_name: File stem for the saved PNG.
+        title: Optional plot title.
+
+    Returns:
+        None.
+    """
+
     _, ax = plt.subplots()
     if title is not None:
         ax.set_title(title)
@@ -180,16 +248,19 @@ def save_volume(
     file_path: Path | str,
     header: None | Header = None,
 ) -> None:
-    """Helper to save volumes
+    """Save a NumPy or torch volume with MedPy.
 
     Args:
-        volume (np.ndarray | torch.Tensor): Volume to store
-        opath (Path): opath without filename
-        filename (str): Filename
-        data_format (str, optional): data format. Defaults to '.mha'.
-        header (None | Header, optional): Medpy header. Defaults to None.
-        pixel_spacing (list, optional): Pixel spacing. Defaults to [1,1,1].
-        override (bool, optional): Silently override existing volumes. Defaults to True.
+        volume: Volume to store.
+        file_path: Full output path. Supported suffixes are ``.mha``, ``.nii``,
+            ``.nii.gz``, ``.dcm``, and ``.mhd``.
+        header: Optional MedPy header to preserve spacing/origin metadata.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: If the output suffix is unsupported.
     """
 
     if isinstance(file_path, str):
@@ -203,9 +274,9 @@ def save_volume(
         data_format == i for i in [".mha", ".nii", ".nii.gz", ".dcm", ".mhd"]
     ), f" The format {data_format} is currently not supported"
 
-    # check if folder exists
+    # Create the parent directory at the last possible moment so callers can
+    # validate paths without pre-creating the full output tree.
     if not file_path.parent.exists():
         file_path.parent.mkdir(parents=True)
 
-    # save file
     save(volume, file_path, hdr=header, use_compression=True)

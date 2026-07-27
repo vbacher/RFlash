@@ -1,15 +1,28 @@
-###### imports ######
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Utilities for re-rendering trained RFlash representations into
+    shadow-reduced image volumes.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
 
-## library imports
 import numpy as np
 import torch
 
-## project imports
 from src.datasets import Dataset_2D_lin_array, Dataset_3D_volume
 from src.model.rendering import Render_engine
 from src.model.representation import ExplicitRepresentation, SlicePoses
-
-###### body ######
 
 
 def _accumulate_inverse_trilinear(
@@ -19,9 +32,13 @@ def _accumulate_inverse_trilinear(
     accumulator_values: torch.Tensor,
     accumulator_weights: torch.Tensor,
 ) -> None:
-    """Accumulate weighted trilinear pseudo-inverse contributions into global buffers."""
+    """Accumulate weighted trilinear pseudo-inverse contributions into buffers.
 
-    # FIXME: not yet tested
+    The accumulation mirrors the interpolation convention used during training:
+    coordinates are padded by three voxels, contributions are distributed to
+    the eight neighbouring voxels, and repeated hits are summed with
+    ``index_add_`` before being written into the global buffers.
+    """
 
     coords = (coord_array + 3).flatten(0, -2)
     values = values.flatten()
@@ -96,7 +113,19 @@ def _accumulate_inverse_bilinear(
     accumulator_values: torch.Tensor,
     accumulator_weights: torch.Tensor,
 ) -> None:
-    """Accumulate weighted bilinear pseudo-inverse contributions into global buffers."""
+    """Accumulate weighted bilinear pseudo-inverse contributions into buffers.
+
+    Args:
+        coord_array: Cartesian coordinates with shape ``(batch, height, width, 3)``.
+        values: Rendered slice values with shape ``(batch, height, width)``.
+        imgstack_shape: Unpadded output stack shape.
+        accumulator_values: Global numerator buffer.
+        accumulator_weights: Global denominator buffer.
+
+    Raises:
+        ValueError: If ``values`` and ``coord_array`` do not describe the same
+            sample grid.
+    """
 
     if values.shape != coord_array.shape[:-1]:
         raise ValueError(
@@ -162,31 +191,35 @@ def render_volume(
     dataset: Dataset_3D_volume | Dataset_2D_lin_array,
     batch_size: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Renders a volume
+    """Render a trained representation back into volume or stack space.
 
     Args:
-        representation_model (ExplicitRepresentation): Trained representation model
-        pose_model (LearnPose): Pose model
-        render_model (Render_engine_3D): Render engine
-        dataset (Dataset_3D_volume): Dataset
-        shadow_reduction (bool, optional): Swith for shadow reduction. Defaults to True.
+        representation_model: Trained attenuation/scatter representation.
+        pose_model: Fixed slice-pose model.
+        render_model: Renderer used to synthesize shadow-free slices.
+        dataset: Dataset that defines the slice coordinate system.
+        batch_size: Number of slices to render per batch.
 
     Returns:
-        torch.Tensor: Rendered volume.
-    """
+        Tuple ``(render, shadow_mask)`` as NumPy arrays in the original dataset
+        volume/stack shape.
 
-    # shortcut for shadow reduction and two parameters
-    # if shadow_reduction and representation_model.dim_latent_space == 2:
-    #     return representation_model.get_cost_vol()[...,1]
+    Raises:
+        ValueError: If ``batch_size`` is not positive.
+        NotImplementedError: If ``dataset`` is not one of the supported public
+            demo datasets.
+    """
 
     device = representation_model.get_device()
 
     if batch_size <= 0:
         raise ValueError(f"batch_size must be > 0, got {batch_size}")
 
-    # get index of example slice
     idxs = torch.arange(pose_model.num_cams)
 
+    # The inverse interpolation kernel must match the dataset geometry: 3D
+    # volumes use trilinear accumulation, while aligned 2D stacks use bilinear
+    # accumulation within each slice.
     if isinstance(dataset, Dataset_3D_volume):
         padded_shape = tuple(np.asarray(dataset.vh.shape) + 6)
         crop = (slice(3, -3), slice(3, -3), slice(3, -3))
@@ -211,11 +244,9 @@ def render_volume(
             end_idx = start_idx + batch_size
             idx_batch = idxs[start_idx:end_idx]
 
-            # retrieve coordinates for current batch
             aff_mat_slice = pose_model(idx_batch).to(device=device)
             slice_coords = dataset.sh.get_cart_coord_FoV(aff_mat_slice).to(device=device)
 
-            # render current batch
             parameter_maps = representation_model(slice_coords).detach()
             render_batch, shadow_batch = render_model.rend_wo_shadow(parameter_maps)
 

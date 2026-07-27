@@ -1,3 +1,22 @@
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Lightweight matplotlib visualization helpers for debugging image geometry
+    and saving public-demo training statistics.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
+
 from __future__ import annotations
 
 import os
@@ -54,12 +73,15 @@ def visualize_2d_image(
 def visualize_vol(
     volume: np.ndarray | torch.Tensor, spacing_mm: list[float] | np.ndarray = [1.0, 1.0, 1.0], title="volume"
 ) -> None:
-    """Visualize ultrasound volume. For easier debugging, the visualization is not normalized.
+    """Visualize the three middle planes of an ultrasound volume.
 
     Args:
-        volume (np.ndarray | torch.Tensor): Input volume. Must be 3D
-        spacing_mm (Sequence, optional): Pixcel spacing. Array must be of length 3. Defaults to [1,1,1].
-        title (str, optional): Title of image. Defaults to "volume".
+        volume: Input volume with shape ``(height, width, depth)``.
+        spacing_mm: Voxel spacing in millimetres. Must have length 3.
+        title: Figure title.
+
+    Returns:
+        None.
 
     Example:
         >>> vol = np.random.randint(0,255,(60,60,60))
@@ -69,10 +91,10 @@ def visualize_vol(
     if torch.is_tensor(volume):
         volume = volume.cpu().detach().numpy()
 
-    assert len(volume.shape) == 3, f"this function prints only 2D images but got tensor of shape {volume.shape}"
+    assert len(volume.shape) == 3, f"this function visualizes only 3D volumes but got tensor of shape {volume.shape}"
     assert len(spacing_mm) == len(
         volume.shape
-    ), f"Mismatching dimentions of image and scaling. Dimensions image: {volume.shape}; Dimenstions scaling: {spacing_mm}"
+    ), f"Mismatching dimensions of image and scaling. Dimensions image: {volume.shape}; dimensions scaling: {spacing_mm}"
 
     midplanes = [i // 2 for i in volume.shape]
     fig, ax = plt.subplots(1, 3, figsize=(10, 3), layout="constrained")
@@ -95,14 +117,17 @@ def visualize_vol(
 def visualize_stats(
     losses: list[float], l2s: list[float], ssims: list[float], output_dir: str | Path, title="Training Statistics"
 ) -> None:
-    """Visualize training statistics.
+    """Save training loss curves as a PNG file.
 
     Args:
-        losses (list[float]): List of loss values.
-        l2s (list[float]): List of L2 values.
-        ssims (list[float]): List of SSIM values.
-        output_path (str): Path to save the visualization.
-        title (str, optional): Title of the plot. Defaults to "Training Statistics".
+        losses: Epoch-wise total losses.
+        l2s: Epoch-wise L2 losses.
+        ssims: Epoch-wise SSIM values.
+        output_dir: Directory where ``training_stats.png`` is written.
+        title: Figure title.
+
+    Returns:
+        None.
     """
     fig, ax = plt.subplots(3, 1, figsize=(10, 10), layout="constrained")
     fig.suptitle(title)

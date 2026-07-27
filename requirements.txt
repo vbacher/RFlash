@@ -2,6 +2,7 @@ numpy>=1.24
 matplotlib>=3.7
 medpy>=0.5
 opencv-python
+scipy>=1.10
 torch
-tqdm
 torchmetrics
+tqdm

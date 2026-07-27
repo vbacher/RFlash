@@ -1,4 +1,21 @@
-"""Command line demo for loading RFlash example data and estimating geometry."""
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Command line entry point for running the public RFlash shadow-reduction
+    demo on fetal brain, abdominal ultrasound, or synthetic liver data.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
 
 from __future__ import annotations
 
@@ -37,13 +54,24 @@ from src.utils.transformations import (
     standardize_volume,
 )
 
-# FIXME:remove
 from src.utils.visualization import visualize_stats
 
 DATASET_CHOICES = ("fetal_brain", "abdominal", "synthetic_liver")
 
 
 def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
+    """Run the full RFlash demo for a 3D ultrasound volume.
+
+    Args:
+        args: Parsed command line arguments. ``args.input`` must point to a
+            supported 3D volume file, and ``args.output`` selects the output
+            directory.
+        device: PyTorch device used for model training and rendering.
+
+    Returns:
+        None. The function writes shadow-reduced and original volumes to
+        ``<output>/shadow_removed``.
+    """
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -51,7 +79,8 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
     volume, header = load_volume(args.input)
     spacing_mm = np.asarray([float(value) for value in header.spacing])
 
-    # estimate transducer geometry
+    # Geometry estimation is done from the observed fan support before
+    # standardization so that background zeros remain meaningful.
     geometry = estimate_scanner_geometry_volume(
         volume, spacing_mm, overlay_dir=f"{output_dir}/intermediate_images", verbose=not args.silent
     )
@@ -62,12 +91,13 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
 
     volume = standardize_volume(volume, params.init_values[1])
 
-    # create traiings dataset
+    # Create training dataset.
     dataset = Dataset_3D_volume(
         volume=volume, model_params=params, geometry=geometry, pixel_spacing_mm=spacing_mm, device=device
     )
 
-    # initialize models
+    # Initialize the fixed pose model, the trainable explicit parameter volume,
+    # and the differentiable ultrasound renderer.
     pose_model = SlicePoses(dataset.get_localization(), spacing_mm)
     representation_model = ExplicitRepresentation(
         volume_shape=volume.shape,
@@ -79,7 +109,7 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
         compression=params.compression,
     )
 
-    # train decomposition model
+    # Train the decomposition model while logging scalar statistics in memory.
     loss, l2, ssim = train_model(
         representation_model=representation_model,
         pose_model=pose_model,
@@ -91,7 +121,8 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
     if not args.silent:
         visualize_stats(loss, l2, ssim, output_dir=output_dir.joinpath("training_stats"))
 
-    # Obtain shadow reduced volume from the trained model
+    # Re-render the learned representation without the attenuation term to
+    # obtain the shadow-reduced volume.
     shadow_reduced, _ = render_volume(
         representation_model=representation_model,
         pose_model=pose_model,
@@ -113,6 +144,17 @@ def run_3D_volume_demo(args: argparse.Namespace, device: torch.device) -> None:
 
 
 def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
+    """Run the RFlash demo for a stack of curvilinear 2D ultrasound images.
+
+    Args:
+        args: Parsed command line arguments. ``args.input`` must be a directory
+            of grayscale-compatible image files.
+        device: PyTorch device used for model training and rendering.
+
+    Returns:
+        None. The function saves image-space original and shadow-reduced stacks
+        as medical image volumes.
+    """
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -128,17 +170,19 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
     params.image_size_polar = (np.asarray(stack.shape[:-1]) * 1.1).astype(np.int16)
     params.image_size_cartesian = np.asarray(stack.shape[:-1]).astype(np.int16)
 
-    # resample ttp simulation space. After resampling it can be used similar to linear probe data.
+    # Curvilinear 2D slices are resampled into the renderer's polar simulation
+    # space, where they can be optimized using the same linear-stack machinery.
     stack_sim = resample_to_simulation_space(stack, geometry, params)
 
     vol_mask = resample_to_image_space(np.ones_like(stack, dtype=bool), geometry, params).astype(bool)
 
     stack_sim = standardize_volume(stack_sim, params.init_values[1])
 
-    # create traiings dataset
+    # Create training dataset.
     dataset = Dataset_2D_lin_array(stack=stack_sim)
 
-    # initialize models
+    # Initialize the fixed pose model, the trainable explicit parameter stack,
+    # and the differentiable ultrasound renderer.
     pose_model = SlicePoses(dataset.get_localization())
     representation_model = ExplicitRepresentation(
         volume_shape=stack_sim.shape,
@@ -150,7 +194,7 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
         compression=params.compression,
     )
 
-    # train decomposition model
+    # Train the decomposition model while logging scalar statistics in memory.
     loss, l2, ssim = train_model(
         representation_model=representation_model,
         pose_model=pose_model,
@@ -163,7 +207,8 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
     if not args.silent:
         visualize_stats(loss, l2, ssim, output_dir=output_dir.joinpath("training_stats"))
 
-    # Obtain shadow reduced volume from the trained model
+    # Re-render without attenuation, then map back to the original image space
+    # so the saved output aligns with the input images.
     shadow_reduced, _ = render_volume(
         representation_model=representation_model,
         pose_model=pose_model,
@@ -187,6 +232,18 @@ def run_2D_stack_demo(args: argparse.Namespace, device: torch.device) -> None:
 
 
 def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> None:
+    """Run the RFlash demo for synthetic linear-probe liver ultrasound data.
+
+    Args:
+        args: Parsed command line arguments. ``args.input`` can be a single
+            ``.npy`` file or a directory of compatible ``.npy`` files.
+        device: PyTorch device used for model training and rendering.
+
+    Returns:
+        None. The function writes original and shadow-reduced stacks to the
+        output directory.
+    """
+
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -195,10 +252,11 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
     params = Parameter_Demo2D_linear()
     stack = standardize_volume(stack, params.init_values[1])
 
-    # create traiings dataset
+    # Create training dataset.
     dataset = Dataset_2D_lin_array(stack=stack)
 
-    # initialize models
+    # Initialize the fixed pose model, the trainable explicit parameter stack,
+    # and the differentiable ultrasound renderer.
     pose_model = SlicePoses(dataset.get_localization())
     representation_model = ExplicitRepresentation(
         volume_shape=stack.shape,
@@ -210,7 +268,7 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
         compression=params.compression,
     )
 
-    # train decomposition model
+    # Train the decomposition model while logging scalar statistics in memory.
     loss, l2, ssim = train_model(
         representation_model=representation_model,
         pose_model=pose_model,
@@ -222,7 +280,8 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
     if not args.silent:
         visualize_stats(loss, l2, ssim, output_dir=output_dir.joinpath("training_stats"))
 
-    # Obtain shadow reduced volume from the trained model
+    # The synthetic liver input is already in the renderer's linear simulation
+    # space, so the learned shadow-reduced stack can be saved directly.
     shadow_reduced, _ = render_volume(
         representation_model=representation_model,
         pose_model=pose_model,
@@ -244,9 +303,20 @@ def run_synthetic_liver_demo(args: argparse.Namespace, device: torch.device) -> 
 
 
 def run_demo(args: argparse.Namespace) -> None:
-    """Load a dataset and estimate its ultrasound fan geometry."""
+    """Dispatch the command line demo for the selected dataset.
 
-    # get execution device
+    Args:
+        args: Parsed command line arguments from :func:`parse_args`.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If ``args.dataset`` is not one of ``DATASET_CHOICES``.
+    """
+
+    # Prefer accelerator backends when available; all tensors are moved inside
+    # the training routine and dataset constructors.
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
@@ -270,7 +340,11 @@ def run_demo(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command line arguments for the public demo."""
+    """Parse command line arguments for the public demo.
+
+    Returns:
+        Parsed command line arguments.
+    """
 
     parser = argparse.ArgumentParser(
         description="Load ultrasound demo data and estimate the RFlash scanner geometry.",
@@ -294,7 +368,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path("outputs"),
-        help="Directory for geometry overlays and geometry.json.",
+        help="Directory for intermediate images, training plots, and saved volumes.",
     )
     parser.add_argument(
         "-s",

@@ -1,21 +1,36 @@
-###### imports ######
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Loss functions used to train the RFlash explicit representation.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
 
 import torch
 from torch.nn import MSELoss
 from torchmetrics.image import StructuralSimilarityIndexMeasure
 
-# FIXME: remove in final version. ONly for debugging
-
-###### body ######
-
 
 class L2SSIMLoss(torch.nn.Module):
+    """Weighted objective combining pixel-wise L2 error and SSIM similarity."""
+
     def __init__(self, l: float = 0.1, device: torch.device = torch.device("cpu")):
-        """This loss function is a weighted sum of SSIM and L2 loss
+        """Initialize the combined L2/SSIM loss.
 
         Args:
-            l (float, optional): weighting factor. Defaults to 0.1.
-            device (_type_, optional): Execution device. Defaults to torch.device('cpu').
+            l: Weight assigned to the L2 term. The SSIM loss receives
+                ``1 - l``.
+            device: Execution device for the SSIM metric state.
         """
 
         super().__init__()
@@ -25,17 +40,19 @@ class L2SSIMLoss(torch.nn.Module):
         self.l = l
 
     def forward(self, output: torch.Tensor, target: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Overload of forward function calculating the weighted L2 and SSIM loss
+        """Compute weighted loss, L2 component, and SSIM metric.
 
         Args:
-            output (torch.Tensor): Prediction
-            target (torch.Tensor): Target
+            output: Rendered slices with shape ``(batch, height, width)``.
+            target: Observed slices with shape ``(batch, height, width)``.
 
         Returns:
-            tuple[torch.Tensor,torch.Tensor,torch.Tensor]: loss, l2 , ssim
+            Tuple ``(loss, l2, ssim)``. ``loss`` is minimized; ``ssim`` is
+            returned for logging.
         """
-        # l2norm = torch.norm(target-output,2)
         l2norm = self.mse(output, target)
+        # TorchMetrics expects image tensors as (N, C, H, W). The renderer
+        # produces single-channel slices, so a channel axis is inserted here.
         output_aug = output[:, :, :, None]
         output_aug = torch.swapaxes(output_aug, 1, 3)
         target_aug = target[:, :, :, None]

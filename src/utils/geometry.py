@@ -1,4 +1,21 @@
-###### imports ######
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Geometry handlers and interpolation kernels for sampling ultrasound slices
+    from dense volumes or aligned image stacks.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
 
 import sys
 
@@ -8,33 +25,34 @@ import torch
 from src.utils.transformations import transform_slice
 from src.utils.visualization import visualize_vol
 
-###### body ######
-
 
 class VolumeHandler:
+    """Hold a 3D volume, its mask, and interpolation methods."""
+
     def __init__(
         self,
         volume: torch.Tensor,
         pixel_spacing: list[float] | np.ndarray = [1, 1, 1],
         volume_mask: torch.Tensor | None = None,
     ):
-        """Constructor of Volume Handler. The volume handler is mainly designe to hold volume and corresponding mask
-        as well as interpolate.
+        """Construct a volume handler.
 
         Args:
-            volume (torch.Tensor): Volume to create volume handler of
-            pixel_spacing (list[float], optional): Pixcel spacing of pixels in volume. Defaults to np.asarray([1,1,1]).
-            volume_mask (torch.Tensor | None): Volume mask. Defaults to None
+            volume: 3D tensor with shape ``(height, width, depth)``.
+            pixel_spacing: Voxel spacing in millimetres.
+            volume_mask: Optional foreground mask with the same shape as
+                ``volume``. If omitted, positive voxels are foreground.
 
-        Example:
-            >>> volume = vol = np.random.randint(0,255,(60,60,60))
-            >>> vh = VolumeHandler(volume)
+        Raises:
+            AssertionError: If the volume is not 3D or spacing does not have
+                three entries.
         """
 
         assert volume.ndim == 3, "Volume tensor must be 3D"
-        assert volume.ndim == pixel_spacing.__len__(), "Pixcel spacing must have size 3 but is of "
+        assert volume.ndim == pixel_spacing.__len__(), "Pixel spacing must have size 3."
 
-        # masking cone from background
+        # The public demo uses zero-valued background outside the ultrasound
+        # fan, so positive values define the default support mask.
         if volume_mask is None:
             volume_mask = volume.clone()
             volume_mask[volume_mask > 0] = 1
@@ -47,60 +65,64 @@ class VolumeHandler:
         self.pixel_spacing = pixel_spacing
 
     def get_pixel_value_cart(self, coord_array: torch.Tensor) -> torch.Tensor:
-        """Returns the grey values of a set of slices defined by cartesian coordinates.
+        """Return volume intensities at Cartesian slice coordinates.
 
         Args:
-            coord_array (torch.Tensor): Array of coordinates. Shape: (batch, r_range, phi_range, 3)
+            coord_array: Coordinates with shape ``(batch, height, width, 3)``.
 
         Returns:
-            torch.Tensor: Tensor containing grey values. Shape: (batch, r_range, phi_range)
+            Interpolated intensities with shape ``(batch, height, width)``.
         """
         return trilinear_interpolation(coord_array, self.volume[..., None])[..., -1]
 
     def get_mask_value_cart(self, coord_array: torch.Tensor) -> torch.Tensor:
-        """Returns the values of the volume mask of a set of slices defined by cartesian coordinates.
+        """Return mask values at Cartesian slice coordinates.
 
         Args:
-            coord_array (torch.Tensor): Array of coordinates. Shape: (batch, r_range, phi_range, 3)
+            coord_array: Coordinates with shape ``(batch, height, width, 3)``.
 
         Returns:
-            torch.Tensor: Tensor containing grey values. Shape: (batch, r_range, phi_range)
+            Boolean mask with shape ``(batch, height, width)``.
         """
         interpolation = trilinear_interpolation(coord_array, self.vol_mask[..., None])[..., -1]
         return interpolation > 0
 
     def visualize_volume(self) -> None:
-        """Helper function. Visualizes the volume."""
+        """Visualize the three central planes of the stored volume."""
         visualize_vol(self.volume, self.pixel_spacing)
 
     def visualize_mask(self) -> None:
-        """Visualizes the Volume Mask."""
+        """Visualize the three central planes of the stored volume mask."""
         visualize_vol(self.vol_mask, self.pixel_spacing)
 
 
 class StackHandler:
+    """Hold an aligned 2D image stack and bilinear interpolation methods."""
+
     def __init__(
         self,
         stack: torch.Tensor,
         pixel_spacing: list[float] = [1, 1, 1],
         volume_mask: torch.Tensor | None = None,
     ):
-        """Constructor of Volume Handler. The volume handler is mainly designe to hold volume and corresponding mask as well as interpolate.
+        """Construct a stack handler.
 
         Args:
-            volume (torch.Tensor): Volume to create volume handler of
-            pixel_spacing (list[float], optional): Pixcel spacing of pixels in volume. Defaults to np.asarray([1,1,1]).
-            volume_mask (torch.Tensor | None): Volume mask. Defaults to None
+            stack: 3D tensor with shape ``(height, width, num_slices)``.
+            pixel_spacing: Spacing in millimetres for row, column, and slice axes.
+            volume_mask: Optional foreground mask with the same shape as
+                ``stack``. If omitted, positive pixels are foreground.
 
-        Example:
-            >>> volume = vol = np.random.randint(0,255,(60,60,60))
-            >>> vh = VolumeHandler(volume)
+        Raises:
+            AssertionError: If the stack is not 3D or spacing does not have
+                three entries.
         """
 
         assert stack.ndim == 3, "Volume tensor must be 3D"
-        assert stack.ndim == pixel_spacing.__len__(), "Pixcel spacing must have size 3 but is of "
+        assert stack.ndim == pixel_spacing.__len__(), "Pixel spacing must have size 3."
 
-        # masking cone from background
+        # The stack demos use full-image masks by default, while this fallback
+        # keeps the handler usable for zero-background stacks.
         if volume_mask is None:
             volume_mask = stack.clone()
             volume_mask[volume_mask > 0] = 1
@@ -113,38 +135,40 @@ class StackHandler:
         self.pixel_spacing = pixel_spacing
 
     def get_pixel_value_cart(self, coord_array: torch.Tensor) -> torch.Tensor:
-        """Returns the grey values of a set of slices defined by cartesian coordinates.
+        """Return stack intensities at Cartesian slice coordinates.
 
         Args:
-            coord_array (torch.Tensor): Array of coordinates. Shape: (batch, r_range, phi_range, 3)
+            coord_array: Coordinates with shape ``(batch, height, width, 3)``.
 
         Returns:
-            torch.Tensor: Tensor containing grey values. Shape: (batch, r_range, phi_range)
+            Interpolated intensities with shape ``(batch, height, width)``.
         """
         return bilinear_interpolation_stack(coord_array, self.volume[..., None])[..., -1]
 
     def get_mask_value_cart(self, coord_array: torch.Tensor) -> torch.Tensor:
-        """Returns the values of the volume mask of a set of slices defined by cartesian coordinates.
+        """Return mask values at Cartesian slice coordinates.
 
         Args:
-            coord_array (torch.Tensor): Array of coordinates. Shape: (batch, r_range, phi_range, 3)
+            coord_array: Coordinates with shape ``(batch, height, width, 3)``.
 
         Returns:
-            torch.Tensor: Tensor containing grey values. Shape: (batch, r_range, phi_range)
+            Boolean mask with shape ``(batch, height, width)``.
         """
         interpolation = bilinear_interpolation_stack(coord_array, self.vol_mask[..., None])[..., -1]
         return interpolation > 0
 
     def visualize_stack(self) -> None:
-        """Helper function. Visualizes the volume."""
+        """Visualize the three central planes of the stored stack."""
         visualize_vol(self.volume, self.pixel_spacing)
 
     def visualize_mask(self) -> None:
-        """Visualizes the Volume Mask."""
+        """Visualize the three central planes of the stored stack mask."""
         visualize_vol(self.vol_mask, self.pixel_spacing)
 
 
 class SliceHandler:
+    """Generate curvilinear fan-slice coordinate grids."""
+
     def __init__(
         self,
         frame_size_cart_pix: np.ndarray,  # x,y in pix
@@ -157,28 +181,33 @@ class SliceHandler:
         angular_limits: list | None = None,  # limit points
         axis_added_dimension: int = 1,
     ) -> None:
-        """Constructor for SliceHandler. The SliceHandler interpolates single slices and presents them.
+        """Construct a curvilinear fan-slice handler.
 
         Args:
-            frame_size_cart (list[int]): Dimenstions of frame of slice in pixel. (x,y)
-            frame_size_polar (list[int]): Discretization of the fan shaped slice in polar coordinates (r, phi)
-            source_pos_slice (list[float]): Position of the sound source of the fan shaped area of interst of the slice
-            source_pos_tilt (list[float] | None, optional): Position of the point around which the internal scanner head turned. Needed for some interpolation. Defaults to None.
-            pixel_spacing (list[float], optional): Pixel spacing of slice in mm. Defaults to np.asarray([1,1]).
-            radius_range (list | None, optional): Range of radii defining the fan shaped area of interst.
-            angular_range (float | None, optional): Angle width defining the fan shaped area of interst.
-            angular_limits (list | None, optional): Angular limit points. Defaults to None.
-            axis_added_dimension (int): Axis along with the dimention to 3D will be added. Defaults to 1
+            frame_size_cart_pix: Cartesian frame size in pixels as
+                ``(height, width)``.
+            frame_size_polar: Fan discretization as
+                ``(radial_samples, angular_samples)``.
+            source_pos_slice_pix: Virtual slice source in pixels.
+            source_pos_tilt_pix: Pivot source for the volume tilt dimension.
+                If omitted, the slice source is used for backwards compatibility.
+            pixel_spacing_cart: Pixel spacing in millimetres.
+            radius_range_mm: Optional inner/outer fan radii in millimetres.
+            angular_range: Optional fan opening angle in radians.
+            angular_limits: Optional two fan boundary points in pixels.
+            axis_added_dimension: Axis where the slice plane is embedded into
+                3D coordinates.
 
-        Example:
-            >>> #TODO
+        Raises:
+            AssertionError: If ``frame_size_polar`` is missing.
         """
 
         assert frame_size_polar is not None, "frame_size_polar must be specified."
 
-        # The cone is usually spanned by a curved 1D piezo crystal array, which is tilted inside the 3D scanner head.
-        # source pos slice denotes the points source of the curved array while tilt referes to the point around which
-        # the scanner is turned.
+        # The cone is usually spanned by a curved 1D piezo crystal array, which
+        # is tilted inside the 3D scanner head. ``source_pos_slice_pix`` denotes
+        # the fan point source, while ``source_pos_tilt_pix`` denotes the pivot
+        # around which the scanner is turned.
         if source_pos_tilt_pix is None:
             self.source_pos_tilt_pix = np.asarray(source_pos_slice_pix)
             print(
@@ -196,7 +225,8 @@ class SliceHandler:
         self.source_pos_slice_mm = self.source_pos_slice_pix * pixel_spacing_cart
         self.pixel_spacing = pixel_spacing_cart
 
-        # angular range
+        # If no explicit angular support is supplied, infer a broad default fan
+        # from the image extent. Otherwise use the estimated fan limits.
         if angular_range is None and angular_limits is None:
             _, phi_1 = self.get_pol_from_cart(
                 torch.tensor(0) - 0.3 * self.frame_size_cart_mm[0],
@@ -224,7 +254,9 @@ class SliceHandler:
             )
             self.phi_range = list(phis.numpy()[::-1])
 
-        # radial range
+        # The estimated radii are tightened slightly to avoid sampling just
+        # outside the observed fan support, where interpolation would otherwise
+        # mix foreground with background zeros.
         if radius_range_mm is None:
             self.t_range_pix = np.asarray(
                 [
@@ -240,21 +272,17 @@ class SliceHandler:
             radius_range_mm[1] -= 2
             self.t_range_pix = np.asarray(radius_range_mm)
 
-        # adding dimension
         self.axis_added_dimension = axis_added_dimension
 
     def get_cart_from_pol(self, r: torch.Tensor, phi: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Converts polar coordinates to cartesian coordinates
+        """Convert polar fan coordinates to Cartesian image coordinates.
 
         Args:
-            r (torch.Tensor): Tensor containing the radii of the polar coordinates
-            phi (torch.Tensor): Tensor of the same shape as r containing the angular information
+            r: Radii in millimetres.
+            phi: Angles in radians with the same shape as ``r``.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: tuple of (x, y)
-
-        Example:
-            >>> #TODO
+            Tuple ``(x, y)`` in image pixels.
         """
         assert (
             r.shape == phi.shape
@@ -266,17 +294,15 @@ class SliceHandler:
         return (x + self.source_pos_slice_pix[0], y + self.source_pos_slice_pix[1])
 
     def get_pol_from_cart(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """converst cartesian coordinates to polar coordinates.
+        """Convert Cartesian image coordinates to polar fan coordinates.
 
         Args:
-            x (torch.Tensor): tensor containing x values in pixel
-            y (torch.Tensor): tensor containing y values in pixel
+            x: Row-like image coordinates in pixels.
+            y: Column-like image coordinates in pixels.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: (r,phi) in mm
-
-        Example:
-            >>> #TODO
+            Tuple ``(r, phi)`` where ``r`` is in millimetres and ``phi`` is in
+            radians.
         """
         assert x.shape == y.shape, f"x and y tensors need to have same shape but have x: {x.shape}, y: {y.shape}"
 
@@ -295,43 +321,41 @@ class SliceHandler:
         return (r, phi)
 
     def get_reference_cart_grid(self) -> torch.Tensor:
-        """Returns a tensor containing x, y coordinates of a prototype slice.
+        """Return Cartesian coordinates for one untransformed fan slice.
 
         Returns:
-            torch.Tensor: Tensor of shape (r_range, phi_range, 2)
-
-        Example:
-            >>> #TODO
+            Tensor with shape ``(radial_samples, angular_samples, 2)``.
         """
 
-        # create tensors for r and phi of fan in polar coords
+        # Build the fan in polar coordinates first so equal scanline spacing is
+        # preserved before converting to Cartesian sampling coordinates.
         phi_arr = torch.linspace(self.phi_range[0], self.phi_range[1], self.frame_size_pol[1])
         r_arr = torch.linspace(self.t_range_pix[0], self.t_range_pix[1], self.frame_size_pol[0])
         phi_tensor = torch.tile(phi_arr, (self.frame_size_pol[0], 1))
         r_tensor = torch.tile(r_arr.reshape(-1, 1), (1, self.frame_size_pol[1]))
 
-        # convert from polar to cart
         x_tensor, y_tensor = self.get_cart_from_pol(r_tensor, phi_tensor)
 
-        # combine
         reference_tensor = torch.cat((x_tensor[:, :, None], y_tensor[:, :, None]), dim=2)
 
         return reference_tensor
 
     def get_cart_coord_FoV(self, aff_trans_mat: torch.Tensor) -> torch.Tensor:
-        """Returns tensor containing cartesian coordinates of the fans of al slices in cartesian coordinates.
+        """Return Cartesian volume coordinates for all requested fan slices.
 
         Args:
-            aff_trans_mat (torch.Tensor): Tensor containg affine transformation matrices for each slice.
+            aff_trans_mat: Affine matrices with shape ``(batch, 4, 4)``.
 
         Returns:
-            torch.Tensor: Cartesian coordinates of all slices. Shape (batch, r_range, phi_range, 3)
+            Cartesian coordinates with shape
+            ``(batch, radial_samples, angular_samples, 3)``.
         """
         bs = aff_trans_mat.shape[0]
-        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, "Shaoe mismatch. The input must be of shape (bs,4,4)."
+        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, "Shape mismatch. The input must be of shape (bs,4,4)."
         device = aff_trans_mat.device
 
-        # get slice coords in pix
+        # Start with the 2D fan grid, insert the missing volume axis, then move
+        # coordinates so rotations happen around the estimated tilt source.
         slice_coord = torch.tile(self.get_reference_cart_grid()[None, :, :, :], (bs, 1, 1, 1))
         slice_coord = torch.cat(
             [
@@ -342,7 +366,6 @@ class SliceHandler:
             dim=3,
         ).to(device=device)
 
-        # compensate for mismatch of slice source and volume origin
         T_center = torch.tile(
             -torch.tensor(
                 np.insert(
@@ -356,13 +379,14 @@ class SliceHandler:
         )[:, None, None, :].to(device=device)
         slice_coord = slice_coord + T_center
 
-        # transform coordinates
         slice_coord = transform_slice(slice_coord, aff_trans_mat)
 
         return slice_coord
 
 
 class SliceHandlerLinearProbe:
+    """Generate Cartesian coordinate grids for aligned linear-probe stacks."""
+
     def __init__(
         self,
         frame_size_pix: list[int],  # x,y in pix
@@ -370,21 +394,14 @@ class SliceHandlerLinearProbe:
         pixel_spacing_cart: list = [1, 1],  # x,y
         axis_added_dimension: int = 1,
     ) -> None:
-        """Constructor for SliceHandler. The SliceHandler interpolates single slices and presents them.
+        """Construct a linear-probe slice handler.
 
         Args:
-            frame_size_cart (list[int]): Dimenstions of frame of slice in pixel. (x,y)
-            frame_size_polar (list[int]): Discretization of the fan shaped slice in polar coordinates (r, phi)
-            source_pos_slice (list[float]): Position of the sound source of the fan shaped area of interst of the slice
-            source_pos_tilt (list[float] | None, optional): Position of the point around which the internal scanner head turned. Needed for some interpolation. Defaults to None.
-            pixel_spacing (list[float], optional): Pixel spacing of slice in mm. Defaults to np.asarray([1,1]).
-            radius_range (list | None, optional): Range of radii defining the fan shaped area of interst. Defaults to None.
-            angular_range (float | None, optional): Angle width defining the fan shaped area of interst. Defaults to None.
-            angular_limits (list | None, optional): Angular limit points. Defaults to None.
-            axis_added_dimension (int): Axis along with the dimention to 3D will be added. Defaults to 1
-
-        Example:
-            >>> #TODO
+            frame_size_pix: Cartesian slice size in pixels as ``(height, width)``.
+            source_pos_slice_pix: Slice source/origin in pixels.
+            pixel_spacing_cart: Pixel spacing in millimetres.
+            axis_added_dimension: Axis where the slice plane is embedded into
+                3D coordinates.
         """
 
         self.frame_size_cart_pix = frame_size_pix  # (H,W)
@@ -393,23 +410,39 @@ class SliceHandlerLinearProbe:
         self.source_pos_slice_mm = self.source_pos_slice_pix * pixel_spacing_cart
         self.pixel_spacing = pixel_spacing_cart
 
-        # adding dimension
         self.axis_added_dimension = axis_added_dimension
 
     def get_cart_from_pol(self, y: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return identity coordinates for linear-probe data.
+
+        Args:
+            y: Row coordinates.
+            x: Column coordinates.
+
+        Returns:
+            Tuple ``(y, x)`` unchanged.
+        """
+
         return (y, x)
 
     def get_pol_from_cart(self, y: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return identity coordinates for linear-probe data.
+
+        Args:
+            y: Row coordinates.
+            x: Column coordinates.
+
+        Returns:
+            Tuple ``(y, x)`` unchanged.
+        """
+
         return (y, x)
 
     def get_reference_cart_grid(self) -> torch.Tensor:
-        """Returns a tensor containing x, y coordinates of a prototype slice.
+        """Return Cartesian coordinates for one untransformed linear slice.
 
         Returns:
-            torch.Tensor: Tensor of shape (r_range, phi_range, 2)
-
-        Example:
-            >>> #TODO
+            Tensor with shape ``(height, width, 3)``.
         """
         y, x = torch.meshgrid(
             torch.arange(self.frame_size_cart_pix[0]), torch.arange(self.frame_size_cart_pix[1]), indexing="ij"
@@ -419,22 +452,22 @@ class SliceHandlerLinearProbe:
         return reference_tensor
 
     def get_cart_coord_FoV(self, aff_trans_mat: torch.Tensor) -> torch.Tensor:
-        """Returns tensor containing cartesian coordinates of the fans of al slices in cartesian coordinates.
+        """Return Cartesian stack coordinates for selected linear slices.
 
         Args:
-            aff_trans_mat (torch.Tensor): Tensor containg affine transformation matrices for each slice. Shape: (batch, 4, 4)
+            aff_trans_mat: Affine matrices with shape ``(batch, 4, 4)``.
 
         Returns:
-            torch.Tensor: Cartesian coordinates of all slices. Shape (batch, r_range, phi_range, 3)
+            Cartesian coordinates with shape ``(batch, height, width, 3)``.
         """
         bs = aff_trans_mat.shape[0]
-        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, "Shaoe mismatch. The input must be of shape (bs,4,4)."
+        assert torch.Size((bs, 4, 4)) == aff_trans_mat.shape, "Shape mismatch. The input must be of shape (bs,4,4)."
         device = aff_trans_mat.device
 
-        # get slice coords in pix
+        # Linear data is already Cartesian, so the reference grid can be used
+        # directly before applying the per-slice affine transform.
         slice_coord = torch.tile(self.get_reference_cart_grid()[None, :, :, :], (bs, 1, 1, 1)).to(device=device)
 
-        # transform coordinates
         slice_coord = transform_slice(slice_coord, aff_trans_mat)
 
         return slice_coord
@@ -443,15 +476,17 @@ class SliceHandlerLinearProbe:
 def trilinear_interpolation(
     coord_array: torch.Tensor, volume_array: torch.Tensor, padding: bool = True
 ) -> torch.Tensor:
-    """Returns values for the 3D coordinates of coord_array, interpolated from volume using trilinear interpolation
+    """Interpolate values at 3D Cartesian coordinates with trilinear weights.
 
     Args:
-        coord_array (torch.Tensor): Tensor of shape (batch,...,3) containing 3D carthesian coordinates
-        volume_array (torch.Tensor): Array of n volumes to interpolate from. Dimensions: (H,W,D,n).
-        padding (bool): Specifies if padding of volume is required. Defaults to True
+        coord_array: Coordinates with shape ``(batch, height, width, 3)``.
+        volume_array: Volume or parameter maps with shape
+            ``(height, width, depth, channels)``.
+        padding: Whether to add the interpolation padding expected by the
+            coordinate convention.
 
     Returns:
-        torch.Tensor: Interpolated values
+        Interpolated values with shape ``(batch, height, width, channels)``.
     """
 
     coord_array_shape = coord_array.shape
@@ -464,6 +499,8 @@ def trilinear_interpolation(
     vol_shape = np.asarray(volume_array.shape[:3])
     vol_shape -= 6
 
+    # Coordinates are shifted by three voxels to account for the explicit
+    # padding. This lets slices near the original boundary interpolate safely.
     coords = (coord_array + 3).flatten(0, -2)
     mask_x = torch.logical_and(coords[:, 0] <= vol_shape[0] + 2, coords[:, 0] >= 0)
     mask_y = torch.logical_and(coords[:, 1] <= vol_shape[1] + 2, coords[:, 1] >= 0)
@@ -471,7 +508,7 @@ def trilinear_interpolation(
     mask = torch.logical_and(mask_x, torch.logical_and(mask_y, mask_z))
     coords = coords[mask, :]
 
-    # get surounding points
+    # Gather the eight neighbouring lattice points for every valid coordinate.
     x_floor = torch.floor(coords[:, 0]).int()
     y_floor = torch.floor(coords[:, 1]).int()
     z_floor = torch.floor(coords[:, 2]).int()
@@ -479,7 +516,6 @@ def trilinear_interpolation(
     y_ceil = y_floor + 1
     z_ceil = z_floor + 1
 
-    # get values
     values_loc = torch.hstack(
         [
             volume_array[x_floor, y_floor, z_floor, None],
@@ -493,7 +529,7 @@ def trilinear_interpolation(
         ]
     ).swapaxes(0, 1)
 
-    # get corsponding weights
+    # The signed terms match the original interpolation convention.
     weights = torch.vstack(
         [
             (x_ceil - coords[:, 0]) * (y_ceil - coords[:, 1]) * (z_ceil - coords[:, 2]),
@@ -507,7 +543,6 @@ def trilinear_interpolation(
         ]
     )
 
-    # do interpolation
     weights = torch.tile(weights[:, :, None], (1, 1, values_loc.shape[-1]))
     values_loc = torch.sum(weights * values_loc, dim=0)
     values = torch.zeros((mask.shape[0], values_loc.shape[-1]), dtype=torch.float32).to(device=coord_array.device)
@@ -520,19 +555,22 @@ def trilinear_interpolation(
 def pseudo_inverse_trilinear_interpolation(
     coord_array: torch.Tensor, volume_shape: tuple, values: torch.Tensor
 ) -> torch.Tensor:
-    """Performes pseudo inverse interpolation. Using the points stored in coord_array and the coresponding values
-    stored in values it populates a volume of shape volume_shape with inverse interpolated values.
+    """Scatter slice values back into a 3D volume with trilinear weights.
 
     Args:
-        coord_array (torch.Tensor): 3D cartesian coordinates
-        volume_shape (tuple): Shape of output volume
-        values (torch.Tensor): Values corresponding to coord_array
+        coord_array: Coordinates with shape ``(batch, height, width, 3)``.
+        volume_shape: Unpadded output volume shape.
+        values: Values corresponding to ``coord_array`` with shape
+            ``(batch, height, width)``.
 
     Returns:
-        torch.Tensor: Pseudo inverse interpolation
+        Reconstructed volume with shape ``volume_shape``.
+
+    Raises:
+        AssertionError: If ``values`` and ``coord_array`` shapes do not match.
     """
 
-    assert values.shape == coord_array.shape[:-1], "Missmatch between values and coords shape"
+    assert values.shape == coord_array.shape[:-1], "Mismatch between values and coords shape"
 
     device = coord_array.device
 
@@ -545,7 +583,8 @@ def pseudo_inverse_trilinear_interpolation(
     coords = coords[mask, :]
     values = values[mask]
 
-    # get surounding points
+    # Distribute each sampled value to the eight voxels that would contribute to
+    # it during forward trilinear interpolation.
     x_floor = torch.floor(coords[:, 0]).int()
     y_floor = torch.floor(coords[:, 1]).int()
     z_floor = torch.floor(coords[:, 2]).int()
@@ -553,7 +592,7 @@ def pseudo_inverse_trilinear_interpolation(
     y_ceil = y_floor + 1
     z_ceil = z_floor + 1
 
-    # get nearest sourounding integer values for each point
+    # Get nearest surrounding integer values for each point.
     dep = torch.cat(
         [
             torch.vstack([x_floor, y_floor, z_floor])[..., None],
@@ -568,8 +607,8 @@ def pseudo_inverse_trilinear_interpolation(
         dim=2,
     ).reshape((3, values.shape[0] * 8))
 
-    # get the weighting of inverse interpolation
-    weigths = torch.vstack(
+    # Get the weighting of inverse interpolation.
+    weights = torch.vstack(
         [
             (x_ceil - coords[:, 0]) * (y_ceil - coords[:, 1]) * (z_ceil - coords[:, 2]),
             (coords[:, 0] - x_ceil) * (coords[:, 1] - y_floor) * (z_floor - coords[:, 2]),
@@ -582,13 +621,12 @@ def pseudo_inverse_trilinear_interpolation(
         ]
     ).reshape(values.shape[0] * 8)
 
-    # multipy values
-    values = torch.cat([values[:, None] for i in range(8)], dim=1).flatten()
+    values = torch.cat([values[:, None] for _ in range(8)], dim=1).flatten()
 
-    # empty volume
     volume_values = torch.zeros(tuple(np.asarray(volume_shape) + 6)).to(device=device)
 
-    # find points in volume influenced by more than one point of point_array
+    # ``torch.unique`` on MPS is routed through CPU for compatibility with
+    # current backend support.
     if device.type == "mps":
         unique_points, idxs = torch.unique(dep.to(device="cpu"), dim=1, return_inverse=True)
         unique_points = unique_points.to(device=device)
@@ -596,14 +634,12 @@ def pseudo_inverse_trilinear_interpolation(
     else:
         unique_points, idxs = torch.unique(dep, dim=1, return_inverse=True)
 
-    # for each point in the volume add its values and weights
     unique_values = torch.zeros(unique_points.shape[1]).to(device=device)
     unique_weights = torch.full_like(unique_values, 1e-9).to(device=device)
 
-    unique_values.index_add_(0, idxs, values * weigths)
-    unique_weights.index_add_(0, idxs, weigths)
+    unique_values.index_add_(0, idxs, values * weights)
+    unique_weights.index_add_(0, idxs, weights)
 
-    # write to volume
     volume_values[tuple(unique_points)] = unique_values / unique_weights
 
     return volume_values[3:-3, 3:-3, 3:-3]
@@ -612,19 +648,22 @@ def pseudo_inverse_trilinear_interpolation(
 def pseudo_inverse_bilinear_interpolation(
     coord_array: torch.Tensor, imgstack_shape: tuple | np.ndarray, values: torch.Tensor
 ) -> torch.Tensor:
-    """Performes pseudo inverse interpolation. Using the points stored in coord_array and the coresponding values
-    stored in values it populates a volume of shape volume_shape with inverse interpolated values.
+    """Scatter slice values back into an image stack with bilinear weights.
 
     Args:
-        coord_array (torch.Tensor): 3D cartesian coordinates
-        imgstack_shape (tuple | np.ndarray): Shape of output image stack
-        values (torch.Tensor): Values corresponding to coord_array
+        coord_array: Coordinates with shape ``(batch, height, width, 3)``.
+        imgstack_shape: Unpadded output image-stack shape.
+        values: Values corresponding to ``coord_array`` with shape
+            ``(batch, height, width)``.
 
     Returns:
-        torch.Tensor: Pseudo inverse interpolation
+        Reconstructed image stack with shape ``imgstack_shape``.
+
+    Raises:
+        AssertionError: If ``values`` and ``coord_array`` shapes do not match.
     """
 
-    assert values.shape == coord_array.shape[:-1], "Missmatch between values and coords shape"
+    assert values.shape == coord_array.shape[:-1], "Mismatch between values and coords shape"
     coord_array = coord_array.clone()
 
     device = coord_array.device
@@ -638,14 +677,14 @@ def pseudo_inverse_bilinear_interpolation(
     coords = coords[mask, :]
     values = values[mask]
 
-    # get surounding points
+    # Bilinear inverse interpolation operates within each stack slice; z is an
+    # integer slice index rather than an interpolated coordinate.
     x_floor = torch.floor(coords[:, 0]).int()
     y_floor = torch.floor(coords[:, 1]).int()
     z_int = coords[:, 2].int()
     x_ceil = x_floor + 1
     y_ceil = y_floor + 1
 
-    # get nearest sourounding integer values for each point
     dep = torch.cat(
         [
             torch.vstack([x_floor, y_floor, z_int])[..., None],
@@ -656,8 +695,7 @@ def pseudo_inverse_bilinear_interpolation(
         dim=2,
     ).reshape((3, values.shape[0] * 4))
 
-    # get the weighting of inverse interpolation
-    weigths = torch.vstack(
+    weights = torch.vstack(
         [
             (x_ceil - coords[:, 0]) * (y_ceil - coords[:, 1]),
             (x_ceil - coords[:, 0]) * (coords[:, 1] - y_floor),
@@ -666,15 +704,14 @@ def pseudo_inverse_bilinear_interpolation(
         ]
     ).reshape(values.shape[0] * 4)
 
-    # multipy values
-    values = torch.cat([values[:, None] for i in range(4)], dim=1).flatten()
+    values = torch.cat([values[:, None] for _ in range(4)], dim=1).flatten()
 
-    # empty volume
     imgstack_shape = np.asarray(imgstack_shape)
     imgstack_shape[:-1] += 6
     stack_values = torch.zeros(tuple(imgstack_shape)).to(device=device)
 
-    # find points in volume influenced by more than one point of point_array
+    # ``torch.unique`` on MPS is routed through CPU for compatibility with
+    # current backend support.
     if device.type == "mps":
         unique_points, idxs = torch.unique(dep.to(device="cpu"), dim=1, return_inverse=True)
         unique_points = unique_points.to(device=device)
@@ -682,29 +719,29 @@ def pseudo_inverse_bilinear_interpolation(
     else:
         unique_points, idxs = torch.unique(dep, dim=1, return_inverse=True)
 
-    # for each point in the volume add its values and weights
     unique_values = torch.zeros(unique_points.shape[1]).to(device=device)
     unique_weights = torch.full_like(unique_values, 1e-9).to(device=device)
 
-    unique_values.index_add_(0, idxs, values * weigths)
-    unique_weights.index_add_(0, idxs, weigths)
+    unique_values.index_add_(0, idxs, values * weights)
+    unique_weights.index_add_(0, idxs, weights)
 
-    # write to volume
     stack_values[tuple(unique_points)] = unique_values / unique_weights
 
     return stack_values[3:-3, 3:-3]
 
 
 def bilinear_interpolation_stack(coord_array: torch.Tensor, stack: torch.Tensor, padding: bool = True) -> torch.Tensor:
-    """Returns values for the 3D coordinates of coord_array, interpolated from volume using trilinear interpolation
+    """Interpolate values from an aligned image stack with bilinear weights.
 
     Args:
-        coord_array (torch.Tensor): Tensor of shape (batch,...,3) containing 3D carthesian coordinates
-        volume_array (torch.Tensor): Array of n volumes to interpolate from. Dimensions: (b,H,W,n).
-        padding (bool): Specifies if padding of volume is required. Defaults to True
+        coord_array: Coordinates with shape ``(batch, height, width, 3)``.
+        stack: Image stack or parameter maps with shape
+            ``(height, width, num_slices, channels)``.
+        padding: Whether to add the interpolation padding expected by the
+            coordinate convention.
 
     Returns:
-        torch.Tensor: Interpolated values
+        Interpolated values with shape ``(batch, height, width, channels)``.
     """
 
     coord_array_shape = coord_array.shape
@@ -725,14 +762,13 @@ def bilinear_interpolation_stack(coord_array: torch.Tensor, stack: torch.Tensor,
     mask = torch.logical_and(mask_x, mask_y)
     coords = coords[mask, :]
 
-    # get surounding points
+    # Gather the four neighbouring pixels within each integer-indexed slice.
     x_floor = torch.floor(coords[:, 0]).int()
     y_floor = torch.floor(coords[:, 1]).int()
     z_int = coords[:, 2].int()
     x_ceil = x_floor + 1
     y_ceil = y_floor + 1
 
-    # get values
     values_loc = torch.hstack(
         [
             stack[x_floor, y_floor, z_int, None],
@@ -742,7 +778,7 @@ def bilinear_interpolation_stack(coord_array: torch.Tensor, stack: torch.Tensor,
         ]
     ).swapaxes(0, 1)
 
-    # get corsponding weights
+    # The signed terms match the original interpolation convention.
     weights = torch.vstack(
         [
             (x_ceil - coords[:, 0]) * (y_ceil - coords[:, 1]),
@@ -752,7 +788,6 @@ def bilinear_interpolation_stack(coord_array: torch.Tensor, stack: torch.Tensor,
         ]
     )
 
-    # do interpolation
     weights = torch.tile(weights[:, :, None], (1, 1, values_loc.shape[-1]))
     values_loc = torch.sum(weights * values_loc, dim=0)
     values = torch.zeros((mask.shape[0], values_loc.shape[-1]), dtype=torch.float32).to(device=coord_array.device)

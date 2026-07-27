@@ -1,11 +1,21 @@
-"""Estimate the fan geometry of curvilinear ultrasound images.
-
-The public demo only needs the scanner geometry implied by a normal 2D fan
-shape: two approximately straight lateral fan boundaries that meet at the
-virtual acoustic point source.  This module therefore avoids OpenCV/Hough
-dependencies and fits those two boundaries directly from the non-empty image
-support.
-"""
+"""------------------------------------------------------------------------------
+RFlash - Official implementation of the RFlash framework
+Author:
+    Valentin Bacher
+    valentin.bacher@cs.ox.ac.uk
+Affiliation:
+    OMNI Lab
+    Department of Computer Science
+    University of Oxford
+    https://omni.cs.ox.ac.uk/
+Purpose:
+    Estimate curvilinear ultrasound transducer geometry from image support and
+    save overlays for user inspection.
+License:
+    This file is part of the RFlash project and is distributed under the
+    repository's LICENSE. See the LICENSE file in the repository root for
+    licensing information.
+------------------------------------------------------------------------------"""
 
 from __future__ import annotations
 
@@ -21,23 +31,17 @@ from cv2 import Canny, HoughLinesP
 # project imports
 from src._datatypes import SliceTransducerGeometry, VolumeTransducerGeometry
 
-# FIXME: remove this import
-
 
 def get_intersect(points: np.ndarray) -> tuple[float, float]:
-    """calculates the intersection of two lines parametrized by points.
+    """Calculate the intersection of two lines parametrized by endpoints.
 
     Args:
-        points (np.ndarray): Array of shape (4,2) containing both endpoints (x_1,x_2) of both lines (l1, l2), i.e.
-        [x_1_l1, x_2_l1, x_1_l2, x_2_l2]
+        points: Array with shape ``(4, 2)`` containing two endpoints for each
+            line: ``[p1_line1, p2_line1, p1_line2, p2_line2]``.
 
     Returns:
-        tuple[float,float]: Point of intersection (x_c, y_c)
-
-    Example:
-        >>> points = np.asarray([[0,1],[0,2],[1,0],[2,0]])
-        >>> x_c, y_c = __get_intersect(points)
-        >>> assert x_c == 0 and y_c == 0
+        Intersection point ``(x, y)``. Parallel lines return
+        ``(inf, inf)``.
     """
     s = np.vstack([points[0], points[1], points[2], points[3]])  # s for stacked
     h = np.hstack((s, np.ones((4, 1))))  # h for homogeneous
@@ -49,23 +53,17 @@ def get_intersect(points: np.ndarray) -> tuple[float, float]:
     return (x / z, y / z)
 
 
-def __angle_between_points(center_point: np.ndarray, leg_point_a: np.ndarray, leg_point_b: np.ndarray) -> float:
-    """Helper function. Returns angle between three points based at center
+def __angle_between_points(center_point: np.ndarray, leg_point_a: np.ndarray, leg_point_b: np.ndarray) -> float | None:
+    """Return the angle between two legs meeting at a center point.
 
     Args:
-        center_point (np.ndarray): Coordinates of centering point
-        leg_point_a (np.ndarray): Coordinates of first leg
-        leg_point_b (np.ndarray): Coordinates of second leg
+        center_point: Vertex point.
+        leg_point_a: Point defining the first leg.
+        leg_point_b: Point defining the second leg.
 
     Returns:
-        float: resulting angle in radiants
-
-    Example:
-        >>> a = [0,1]
-        >>> b = [1,0]
-        >>> c = [0,0]
-        >>> ang = __angle_between_points(c,a,b)
-        >>> assert np.pi/2 -0.001 <= ang <= np.pi/2 + 0.001
+        Angle in radians, or ``None`` when duplicate points make the angle
+        undefined.
     """
     ca = leg_point_a - center_point
     cb = leg_point_b - center_point
@@ -81,7 +79,14 @@ def __angle_between_points(center_point: np.ndarray, leg_point_a: np.ndarray, le
 
 
 def _as_uint8_image(image: np.ndarray) -> np.ndarray:
-    """Normalize a 2D image to uint8 for display."""
+    """Normalize a 2D image to uint8 for display.
+
+    Args:
+        image: 2D image-like array.
+
+    Returns:
+        ``uint8`` image with the same shape.
+    """
 
     image_array = np.asarray(image, dtype=float)
     finite_mask = np.isfinite(image_array)
@@ -108,7 +113,6 @@ def visualize_geometry_overlay(
 
     Args:
         image: 2D ultrasound slice.
-        spacing_plane_mm: Pixel spacing as ``(row_spacing, column_spacing)``.
         geometry: Geometry estimate returned by :func:`estimate_geometry_slice`.
         output_path: Optional path for a saved PNG overlay.
         show: Whether to open a matplotlib window.
@@ -222,15 +226,13 @@ def estimate_geometry_slice(
     Args:
         plane: 2D ultrasound image with a normal curvilinear fan shape.
         spacing_plane_mm: Pixel spacing as ``(row_spacing, column_spacing)``.
-        threshold: Optional intensity threshold for separating image support
-            from background. When omitted, Otsu's threshold is computed.
-        confirm: If true and stdin is interactive, show the overlay and ask the
-            user whether the estimate is acceptable.
         overlay_path: Optional path where the overlay should be saved.
-        show_overlay: Whether to display the overlay with matplotlib.
+        verbose: Whether to show the overlay and ask for confirmation in an
+            interactive terminal.
 
     Returns:
-        A :class:`SliceGeometry` estimate.
+        Tuple ``(geometry, success)``. ``geometry`` is ``None`` when the user
+        rejects an interactive estimate.
 
     Raises:
         ValueError: If the slice is not 2D or the fan boundaries cannot be fit.
@@ -253,7 +255,9 @@ def estimate_geometry_slice(
     threshold = int(min(plane.shape) * 0.8)
 
     while lines_plane is None and threshold > 0:
-        # extract lines with Hughes transform
+        # Extract boundary candidates with a probabilistic Hough transform. The
+        # threshold is relaxed gradually because fan edges vary strongly across
+        # the public demo datasets.
         lines_plane = HoughLinesP(
             plane_edges,
             1,
@@ -265,7 +269,7 @@ def estimate_geometry_slice(
         )
         threshold -= 5
 
-        # chack if more than 2 lines are detected.
+        # Check if more than two lines are detected.
         if lines_plane is not None:
             if lines_plane.shape[0] < 2:
                 lines_plane = None
@@ -273,7 +277,8 @@ def estimate_geometry_slice(
         else:
             continue
 
-        # get longest two lines
+        # Select the longest ascending and descending edge candidates after
+        # filtering nearly vertical/horizontal artefacts.
         lines_vec = np.concatenate(
             [
                 [lines_plane[..., 0] - lines_plane[..., 2]],
@@ -287,13 +292,6 @@ def estimate_geometry_slice(
             np.abs(lines_vec[..., 0]) > int(plane.shape[0] * 0.005),
             np.abs(lines_vec[..., 1]) > int(plane.shape[1] * 0.005),
         )
-        try:
-            mask_vertical = np.abs(lines_vec[:, 0]) < int(plane.shape[0] * 0.02)
-            center_line = plane.shape[1] // 2
-        except:
-            pass
-
-        # get longest ascending and descending lines
         mask_ascending = np.logical_and(mask, lines_vec[..., 1] > 0)
         mask_descending = np.logical_and(mask, lines_vec[..., 1] < 0)
         if sum(mask_ascending) < 1 or sum(mask_descending) < 1:
@@ -306,18 +304,18 @@ def estimate_geometry_slice(
                     lines_plane[mask_ascending][np.argmax(lines_length[mask_ascending])][None, ...],
                 ]
             )
-        except:
+        except Exception:
             print("None")
 
     assert lines_plane.__len__() == 2, f"edge finding failed. Instead of 2, {lines_plane.__len__()} were found."
     # find source by intersecting lines
     x_2_pix, x_1_pix = get_intersect(lines_plane.reshape(4, 2))
 
-    # get coords of point source
     source_pix = np.asarray([x_1_pix, x_2_pix])
     source_mm = source_pix * spacing_plane_mm
 
-    # get_r_min
+    # The inner radius is estimated from the first foreground row intersected
+    # with both fan boundaries.
     highest_point = np.min(np.arange(support.shape[0])[np.max(support, axis=1) > 0])
     p_1_mm = (
         np.asarray(
@@ -351,14 +349,13 @@ def estimate_geometry_slice(
     )
     r_min_mm = max(np.linalg.norm(p_1_mm - source_mm), np.linalg.norm(p_2_mm - source_mm))
 
-    # get_r_max
+    # The outer radius is estimated from the deepest foreground row.
     lowest_point = np.max(np.arange(support.shape[0])[np.max(support, axis=1) > 0])
     max_extend_of_loest_points = np.where(support[lowest_point] > 0)[0]
     p_1_mm = np.asarray([lowest_point, max_extend_of_loest_points[0]]) * spacing_plane_mm
     p_2_mm = np.asarray([lowest_point, max_extend_of_loest_points[-1]]) * spacing_plane_mm
     r_max_mm = max(np.linalg.norm(p_1_mm - source_mm), np.linalg.norm(p_2_mm - source_mm))
 
-    # get angular range
     angular_range_rad = __angle_between_points(
         source_mm,
         lines_plane[0, 4:1:-1] * spacing_plane_mm,
@@ -368,8 +365,9 @@ def estimate_geometry_slice(
         return None
     angular_range_deg = np.degrees(angular_range_rad)
 
-    # get angular limits
-    ## get four endpoints
+    # Use the two lower line endpoints as angular limits. These are more stable
+    # than the source-adjacent endpoints because Hough detections can terminate
+    # early near the transducer.
     points = np.concatenate(lines_plane.reshape(2, 2, 2), axis=0)[:, ::-1]
     # get two points with largest y value (lower two points)
     ang_limits_pix = points[np.lexsort((points[:, 1], points[:, 0]))][2:]
@@ -414,6 +412,20 @@ def estimate_scanner_geometry_volume(
     source is estimated once in the coronal middle plane and once in the axial
     middle plane, matching the original research code's ``fan`` and ``tilt``
     convention.
+
+    Args:
+        volume: 3D ultrasound volume with shape ``(height, width, depth)``.
+        spacing_mm: Voxel spacing in millimetres.
+        overlay_dir: Optional directory for saved geometry overlays.
+        verbose: Whether to display overlays and ask for interactive
+            confirmation.
+
+    Returns:
+        Estimated 3D transducer geometry.
+
+    Raises:
+        ValueError: If the input is not 3D or one of the middle-plane
+            estimates fails.
     """
 
     volume_array = np.asarray(volume)
@@ -424,16 +436,14 @@ def estimate_scanner_geometry_volume(
     if spacing.shape != (3,):
         raise ValueError("spacing_mm must contain three values.")
 
-    # Find middle planes
     middle = [axis_size // 2 for axis_size in volume_array.shape]
 
-    # get overlay paths
     overlay_root = Path(overlay_dir) if overlay_dir is not None else None
     coronal_overlay = overlay_root / "geometry_coronal_middle.png" if overlay_root else None
     axial_overlay = overlay_root / "geometry_axial_middle.png" if overlay_root else None
 
-    # Estimate geometry in the coronal middle planes.
-    ## transpose to get transducer on top
+    # Transpose middle planes so the transducer appears at the top, matching the
+    # 2D geometry estimator's image convention.
     coronal_midplane = np.transpose(volume[middle[0]])  # y-z
     coronal_spacing_mm = spacing_mm[1:][::-1]
 
@@ -444,8 +454,6 @@ def estimate_scanner_geometry_volume(
         verbose=verbose,
     )
 
-    # Estimate geometry in the axial middle planes.
-    ## transpose to get transducer on top
     axial_midplane = np.transpose(volume[:, middle[1]])  # x-z
     axial_spacing_mm = spacing[::-2]
     axial_geometry, axial_success = estimate_geometry_slice(
@@ -473,8 +481,17 @@ def estimate_scanner_geometry_volume(
 
 
 def _get_number_of_slices_to_process(num_files: int) -> int:
+    """Ask an interactive user how many stack slices should be processed.
+
+    Args:
+        num_files: Number of available slices.
+
+    Returns:
+        Number of slices requested by the user.
+    """
+
     print(
-        "\nThe estimation of the scanner geometry is not alywas stable, especially if the edges of the fan are not clearly visible.\n"
+        "\nThe estimation of the scanner geometry is not always stable, especially if the edges of the fan are not clearly visible.\n"
         f"The current selection contains {num_files} slices. You have to manually check the found geometry for every slice.\n"
     )
     num_slices = -1
@@ -499,7 +516,7 @@ def estimate_scanner_geometries_stack(
     spacing_mm: Iterable[float] = (1.0, 1.0, 1.0),
     overlay_dir: str | Path | None = None,
     verbose: bool = False,
-) -> StackTransducerGeometry:
+) -> tuple[list[SliceTransducerGeometry], list[int]]:
     """Estimate scanner geometry for each slice in a stack of 2D images.
 
     Args:
@@ -509,7 +526,12 @@ def estimate_scanner_geometries_stack(
         verbose: Whether to display overlays with matplotlib.
 
     Returns:
-        A list of :class:`SliceTransducerGeometry` estimates for each slice.
+        Tuple containing the successful per-slice geometry estimates and the
+        corresponding original stack indices.
+
+    Raises:
+        ValueError: If ``stack`` is not 3D or ``spacing_mm`` does not contain
+            row and column spacing.
     """
 
     stack_array = np.asarray(stack)
