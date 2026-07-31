@@ -214,7 +214,15 @@ The app supports two ways to provide data:
 - Upload one or more files through the browser.
 - Enter a server-side path when the data already exists on the remote machine.
 
-The interface asks whether the data is a 3D volume or 2D image data. For 2D data it asks whether the probe is linear or curvilinear. Curvilinear inputs require scanner geometry estimation; the app displays the saved geometry overlays and asks for confirmation before running RFlash.
+The interface asks whether the data is a 3D volume or 2D image data. For 2D data it asks whether the probe is linear or curvilinear. Curvilinear inputs require scanner geometry estimation; the app displays geometry overlays and lets the user accept or reject candidate slices before training.
+
+Accepted inputs in the web interface:
+
+- 3D volume: one `.mha`, `.nii`, or `.nii.gz` file.
+- 2D stack, linear probe: one or more image files, a stack saved as `.mha`, `.nii`, or `.nii.gz`, or synthetic-liver style `.npy` input.
+- 2D stack, curvilinear probe: one or more image files, or a stack saved as `.mha`, `.nii`, or `.nii.gz`.
+
+The app also allows the user to keep the default training parameters or override the main settings manually before running RFlash. During training, the Gradio progress bar is driven by training iterations rather than estimated seconds, and the loss, L2, and SSIM curves update live in the interface.
 
 Sharing is configurable and is disabled by default. To enable a Gradio share link:
 
@@ -235,6 +243,11 @@ python app.py --server-name 0.0.0.0 --server-port 7860 --output outputs/gradio
 ```
 
 The Gradio path prefers CUDA when available. If CUDA is not available it falls back to MPS when available, then CPU.
+
+Processed output formats:
+
+- Volumes can be exported as `.nii.gz` or `.mha`.
+- 2D outputs can be exported as `.nii.gz`, `.mha`, or a zip archive of `.png` or `.jpg` slices.
 
 ## Local Testing
 

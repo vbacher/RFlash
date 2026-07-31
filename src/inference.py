@@ -20,8 +20,10 @@ License:
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -68,11 +70,21 @@ class RFlashOutput:
         shadow_reduced_path: Saved shadow-reduced output volume.
         original_path: Saved original input volume in the output image space.
         output_dir: Root output directory used for the run.
+        shadow_reduced_data: Processed output array in image space.
+        original_data: Original array saved alongside the processed output.
+        header: Optional MedPy header used for volume exports.
+        spacing_mm: Output voxel spacing.
+        is_volume: Whether the result should be treated as a volume preview.
     """
 
     shadow_reduced_path: Path
     original_path: Path
     output_dir: Path
+    shadow_reduced_data: np.ndarray
+    original_data: np.ndarray
+    header: Any | None
+    spacing_mm: np.ndarray
+    is_volume: bool
 
 
 def select_device(prefer_cuda: bool = False) -> torch.device:
@@ -130,6 +142,8 @@ def run_3d_volume_inference(
     device: torch.device,
     silent: bool = False,
     geometry: VolumeTransducerGeometry | None = None,
+    training_overrides: dict[str, float | int] | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> RFlashOutput:
     """Run RFlash on a 3D curvilinear ultrasound volume.
 
@@ -139,6 +153,9 @@ def run_3d_volume_inference(
         device: PyTorch device used for training and rendering.
         silent: Whether to suppress non-essential plots.
         geometry: Optional pre-estimated scanner geometry.
+        training_overrides: Optional training-parameter overrides used by the
+            web interface.
+        progress_callback: Optional training progress callback.
 
     Returns:
         Paths written by the inference run.
@@ -162,6 +179,7 @@ def run_3d_volume_inference(
     params.image_size_polar = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
     params.image_size_cartesian = (np.asarray(volume.shape[::-2]) * 0.9).astype(np.int16)
     params.num_fan_slices = int(volume.shape[1] * 0.9)
+    _apply_training_overrides(params, training_overrides)
 
     volume = standardize_volume(volume, params.init_values[1])
 
@@ -187,6 +205,7 @@ def run_3d_volume_inference(
         data=dataset,
         training_params=params,
         device=device,
+        progress_callback=progress_callback,
     )
     if not silent:
         visualize_stats(loss, l2, ssim, output_dir=output_dir.joinpath("training_stats"))
@@ -212,7 +231,16 @@ def run_3d_volume_inference(
         header=header,
     )
 
-    return RFlashOutput(shadow_reduced_path=shadow_reduced_path, original_path=original_path, output_dir=output_dir)
+    return RFlashOutput(
+        shadow_reduced_path=shadow_reduced_path,
+        original_path=original_path,
+        output_dir=output_dir,
+        shadow_reduced_data=shadow_reduced,
+        original_data=volume,
+        header=header,
+        spacing_mm=spacing_mm,
+        is_volume=True,
+    )
 
 
 def run_2D_stack_demo(
@@ -256,6 +284,8 @@ def run_curvilinear_stack_inference(
     geometry: list[SliceTransducerGeometry] | None = None,
     indices: list[int] | None = None,
     num_slices: int | None = None,
+    training_overrides: dict[str, float | int] | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> RFlashOutput:
     """Run RFlash on a stack of curvilinear 2D ultrasound images.
 
@@ -268,6 +298,9 @@ def run_curvilinear_stack_inference(
         indices: Original stack indices for ``geometry``.
         num_slices: Number of slices to process when geometry is estimated in
             non-interactive contexts.
+        training_overrides: Optional training-parameter overrides used by the
+            web interface.
+        progress_callback: Optional training progress callback.
 
     Returns:
         Paths written by the inference run.
@@ -291,6 +324,7 @@ def run_curvilinear_stack_inference(
     params = Parameter_Demo2D_curvylinear()
     params.image_size_polar = (np.asarray(stack.shape[:-1]) * 1.1).astype(np.int16)
     params.image_size_cartesian = np.asarray(stack.shape[:-1]).astype(np.int16)
+    _apply_training_overrides(params, training_overrides)
 
     stack_sim = resample_to_simulation_space(stack, geometry, params)
     vol_mask = resample_to_image_space(np.ones_like(stack, dtype=bool), geometry, params).astype(bool)
@@ -306,6 +340,7 @@ def run_curvilinear_stack_inference(
         volume_mask=vol_mask,
         geometry=geometry,
         resample_output=True,
+        progress_callback=progress_callback,
     )
     return output
 
@@ -316,6 +351,8 @@ def run_linear_stack_inference(
     device: torch.device,
     silent: bool = False,
     synthetic_liver: bool = False,
+    training_overrides: dict[str, float | int] | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> RFlashOutput:
     """Run RFlash on linear-probe 2D ultrasound images.
 
@@ -326,6 +363,9 @@ def run_linear_stack_inference(
         device: PyTorch device used for training and rendering.
         silent: Whether to suppress non-essential plots.
         synthetic_liver: Whether to use the existing synthetic liver loader.
+        training_overrides: Optional training-parameter overrides used by the
+            web interface.
+        progress_callback: Optional training progress callback.
 
     Returns:
         Paths written by the inference run.
@@ -337,6 +377,7 @@ def run_linear_stack_inference(
         stack = np.transpose(_load_image_stack(input_path), (1, 2, 0))
 
     params = Parameter_Demo2D_linear()
+    _apply_training_overrides(params, training_overrides)
     stack = standardize_volume(stack, params.init_values[1])
     return _run_linear_stack_pipeline(
         stack=stack,
@@ -346,6 +387,7 @@ def run_linear_stack_inference(
         params=params,
         original_stack=stack,
         volume_mask=np.ones_like(stack, dtype=bool),
+        progress_callback=progress_callback,
     )
 
 
@@ -407,7 +449,12 @@ def _load_image_stack(input_path: str | Path | list[str | Path]) -> np.ndarray:
 
     path = Path(input_path)
     if path.is_dir():
+        if any(path.glob("*.npy")):
+            return np.transpose(load_synthetic_liver(path), (2, 0, 1))
         return load_image_directory(path)
+    if _is_volume_input(path):
+        volume, _ = load_volume(path)
+        return _volume_to_stack(volume)
     return load_image_files([path])
 
 
@@ -424,6 +471,25 @@ def _is_npy_input(input_path: str | Path | list[str | Path]) -> bool:
     return False
 
 
+def _is_volume_input(input_path: str | Path) -> bool:
+    """Return whether a path should be treated as a medical-image volume."""
+
+    path = Path(input_path)
+    suffix = path.suffix.lower()
+    if suffix == ".gz" and len(path.suffixes) >= 2:
+        suffix = path.suffixes[-2].lower() + suffix
+    return suffix in {".mha", ".nii", ".nii.gz"}
+
+
+def _volume_to_stack(volume: np.ndarray) -> np.ndarray:
+    """Interpret a saved stack volume as ``(num_slices, rows, columns)``."""
+
+    volume_array = np.asarray(volume)
+    if volume_array.ndim != 3:
+        raise ValueError(f"Expected a 3D stack volume, got shape {volume_array.shape}.")
+    return np.transpose(volume_array, (2, 0, 1))
+
+
 def _run_linear_stack_pipeline(
     stack: np.ndarray,
     output_dir: str | Path,
@@ -434,6 +500,7 @@ def _run_linear_stack_pipeline(
     volume_mask: np.ndarray,
     geometry: list[SliceTransducerGeometry] | None = None,
     resample_output: bool = False,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> RFlashOutput:
     """Train and render the shared linear-stack RFlash pipeline.
 
@@ -449,6 +516,7 @@ def _run_linear_stack_pipeline(
         geometry: Geometry used to map curvilinear results back to image space.
         resample_output: Whether the rendered stack should be resampled back to
             curvilinear image space.
+        progress_callback: Optional training progress callback.
 
     Returns:
         Paths written by the inference run.
@@ -477,6 +545,7 @@ def _run_linear_stack_pipeline(
         data=dataset,
         training_params=params,
         device=device,
+        progress_callback=progress_callback,
     )
 
     if not silent:
@@ -507,4 +576,36 @@ def _run_linear_stack_pipeline(
         file_path=original_path,
         header=get_medpy_header(),
     )
-    return RFlashOutput(shadow_reduced_path=shadow_reduced_path, original_path=original_path, output_dir=output_dir)
+    return RFlashOutput(
+        shadow_reduced_path=shadow_reduced_path,
+        original_path=original_path,
+        output_dir=output_dir,
+        shadow_reduced_data=shadow_reduced,
+        original_data=original_stack,
+        header=get_medpy_header(),
+        spacing_mm=np.asarray([1.0, 1.0, 1.0]),
+        is_volume=False,
+    )
+
+
+def _apply_training_overrides(
+    params: Parameter_Demo3D | Parameter_Demo2D_curvylinear | Parameter_Demo2D_linear,
+    training_overrides: dict[str, float | int] | None,
+) -> None:
+    """Apply validated training overrides to a demo parameter object."""
+
+    if training_overrides is None:
+        return
+
+    if "max_epochs" in training_overrides:
+        params.max_epochs = int(training_overrides["max_epochs"])
+    if "lr" in training_overrides:
+        params.lr = float(training_overrides["lr"])
+    if "lamda_train" in training_overrides:
+        params.lamda_train = float(training_overrides["lamda_train"])
+    if "compression" in training_overrides:
+        params.compression = float(training_overrides["compression"])
+    if "lr_shed_patience" in training_overrides:
+        params.lr_shed_patience = int(training_overrides["lr_shed_patience"])
+    if "batch_size" in training_overrides:
+        params.params_generator["batch_size"] = int(training_overrides["batch_size"])

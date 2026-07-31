@@ -246,7 +246,19 @@ def estimate_geometry_slice(
     if spacing.shape != (2,):
         raise ValueError("spacing_plane_mm must contain row and column spacing.")
 
-    support = (plane_array > 0).astype(np.uint8) * 255  # binary mask of non-zero pixels
+    border_pixels = np.concatenate(
+        [
+            plane_array[0, :],
+            plane_array[-1, :],
+            plane_array[:, 0],
+            plane_array[:, -1],
+        ]
+    )
+    background_level = float(np.median(border_pixels))
+    if np.any(plane_array > background_level):
+        support = (plane_array > background_level).astype(np.uint8) * 255
+    else:
+        support = (plane_array > 0).astype(np.uint8) * 255
 
     # Canny edge detection
     plane_edges = Canny(support, 0, 3, None, 3)
@@ -307,7 +319,8 @@ def estimate_geometry_slice(
         except Exception:
             print("None")
 
-    assert lines_plane.__len__() == 2, f"edge finding failed. Instead of 2, {lines_plane.__len__()} were found."
+    if lines_plane is None or lines_plane.__len__() != 2:
+        raise ValueError("Edge finding failed for the current slice.")
     # find source by intersecting lines
     x_2_pix, x_1_pix = get_intersect(lines_plane.reshape(4, 2))
 
