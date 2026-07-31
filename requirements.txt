@@ -6,3 +6,4 @@ scipy>=1.10
 torch
 torchmetrics
 tqdm
+gradio

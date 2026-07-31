@@ -516,6 +516,7 @@ def estimate_scanner_geometries_stack(
     spacing_mm: Iterable[float] = (1.0, 1.0, 1.0),
     overlay_dir: str | Path | None = None,
     verbose: bool = False,
+    num_slices: int | None = None,
 ) -> tuple[list[SliceTransducerGeometry], list[int]]:
     """Estimate scanner geometry for each slice in a stack of 2D images.
 
@@ -524,6 +525,8 @@ def estimate_scanner_geometries_stack(
         spacing_mm: Pixel spacing as ``(row_spacing, column_spacing)``.
         overlay_dir: Optional directory where overlays should be saved.
         verbose: Whether to display overlays with matplotlib.
+        num_slices: Optional number of slices to process. When omitted, the
+            interactive command line prompt is preserved.
 
     Returns:
         Tuple containing the successful per-slice geometry estimates and the
@@ -542,7 +545,10 @@ def estimate_scanner_geometries_stack(
     if spacing.shape != (2,):
         raise ValueError("spacing_mm must contain two values.")
 
-    num_slices = _get_number_of_slices_to_process(stack_array.shape[0])
+    if num_slices is None:
+        num_slices = _get_number_of_slices_to_process(stack_array.shape[0])
+    if num_slices < 1 or num_slices > stack_array.shape[0]:
+        raise ValueError(f"num_slices must be between 1 and {stack_array.shape[0]}, got {num_slices}.")
 
     geometries = []
     random_selection = np.random.choice(stack_array.shape[0], size=stack_array.shape[0], replace=False)

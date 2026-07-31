@@ -20,6 +20,12 @@ python demo.py \
   --output outputs/fetal_brain
 ```
 
+To launch the web interface on a remote machine:
+
+```bash
+python app.py --server-port 7860
+```
+
 ## Method Overview
 
 RFlash represents ultrasound data with two explicit parameter maps: attenuation and scatter. The differentiable renderer samples these maps along estimated ultrasound scanlines, applies exponential attenuation, time-gain compensation, and log compression, then compares the rendered slices to the observed ultrasound data. After optimization, the representation can be rendered without the attenuation term to produce a shadow-reduced volume or stack.
@@ -40,6 +46,7 @@ RFlash/
 ├── README.md
 ├── LICENSE
 ├── requirements.txt
+├── app.py
 ├── demo.py
 ├── data/
 │   └── fetal_brain/
@@ -76,6 +83,8 @@ pip install -r requirements.txt
 
 The code has been developed for Python 3.11. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU.
 
+The Gradio app listens on `0.0.0.0` by default so it can be reached through SSH port forwarding or deployed to Hugging Face Spaces without code changes.
+
 ## Dependencies
 
 The public demo uses:
@@ -88,6 +97,7 @@ The public demo uses:
 - SciPy for diagnostic morphology utilities.
 - Matplotlib for image loading, overlays, and training plots.
 - tqdm for training progress bars.
+- Gradio for the optional browser-based interface.
 
 No tracking software, experiment database, or private infrastructure is required.
 
@@ -134,7 +144,7 @@ images-l2.npy
 images-r2.npy
 ```
 
-## Running The Demo
+## Running The CLI Demo
 
 Run the packaged fetal brain example:
 
@@ -170,6 +180,98 @@ python demo.py --dataset fetal_brain --input data/fetal_brain/test_3d.nii.gz --o
 ```
 
 For abdominal stacks, the script asks how many slices to process because scanner-geometry estimation can require manual inspection when the fan edges are unclear.
+
+The command line interface and the Gradio application both call the shared inference routines in `src/inference.py`. This keeps a single implementation of the RFlash training and rendering pipeline.
+
+## Running The Gradio Interface
+
+Start the web application with:
+
+```bash
+python app.py
+```
+
+By default the app listens on `0.0.0.0:7860` and writes outputs to:
+
+```text
+outputs/gradio/
+```
+
+On a remote Linux machine, forward the port from your local computer:
+
+```bash
+ssh -L 7860:localhost:7860 user@remote-host
+```
+
+Then open:
+
+```text
+http://localhost:7860
+```
+
+The app supports two ways to provide data:
+
+- Upload one or more files through the browser.
+- Enter a server-side path when the data already exists on the remote machine.
+
+The interface asks whether the data is a 3D volume or 2D image data. For 2D data it asks whether the probe is linear or curvilinear. Curvilinear inputs require scanner geometry estimation; the app displays the saved geometry overlays and asks for confirmation before running RFlash.
+
+Sharing is configurable and is disabled by default. To enable a Gradio share link:
+
+```bash
+python app.py --share
+```
+
+or:
+
+```bash
+RFLASH_GRADIO_SHARE=1 python app.py
+```
+
+Use `--no-share` to override the environment variable. Use `--server-port`, `--server-name`, and `--output` to configure deployment details:
+
+```bash
+python app.py --server-name 0.0.0.0 --server-port 7860 --output outputs/gradio
+```
+
+The Gradio path prefers CUDA when available. If CUDA is not available it falls back to MPS when available, then CPU.
+
+## Local Testing
+
+After installing dependencies, verify the entry points:
+
+```bash
+python demo.py --help
+python app.py --help
+```
+
+Run a small CLI smoke test with the packaged fetal brain example:
+
+```bash
+python demo.py \
+  --dataset fetal_brain \
+  --input data/fetal_brain/test_3d.nii.gz \
+  --output outputs/local_test \
+  --silent
+```
+
+For the web interface, launch:
+
+```bash
+python app.py --server-port 7860
+```
+
+Open `http://localhost:7860`, select the packaged fetal brain volume, estimate and confirm geometry, then run RFlash. On a remote machine, use SSH port forwarding as shown above.
+
+## Hugging Face Spaces Deployment
+
+Create a Gradio Space and upload this repository. The Space should install `requirements.txt` and run:
+
+```bash
+python app.py --server-name 0.0.0.0 --server-port 7860
+```
+
+For Spaces, do not enable `share=True`; the Space itself provides the public URL. Keep any example data small enough for public distribution, and ask users to upload or provide paths for larger abdominal or synthetic liver datasets.
 
 ## Scanner Geometry Estimation
 
