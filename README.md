@@ -1,8 +1,9 @@
 # RFlash
 
-### [Project Page](https://vbacher.github.io/RFlash-ultrasound/) | [Paper]
+### [Project Page](https://vbacher.github.io/RFlash-ultrasound/) | [Demo] | [Paper]
 
 RFlash is the official public demonstration repository for shadow reduction in ultrasound imaging using differentiable simulation and radiance field decomposition.
+For a GUI please use app.py, for a CLI interface use demo.py. The backend is the same.
 
 This repository is intentionally curated for release. It contains the code needed to load supported demo data, estimate scanner geometry, train the RFlash decomposition model, and save shadow-reduced image volumes.
 
@@ -20,10 +21,10 @@ python demo.py \
   --output outputs/fetal_brain
 ```
 
-To launch the web interface on a remote machine:
+To launch the web interface on your local machine, run:
 
 ```bash
-python app.py --server-port 7860
+python app.py
 ```
 
 ## Method Overview
@@ -111,23 +112,13 @@ A small fetal brain 3D ultrasound example is included under:
 data/fetal_brain/
 ```
 
-The command line default currently points to:
-
-```text
-data/fetal_brain/test_3d.nii.gz
-```
-
 ### Abdominal Ultrasound
 
 Download the US simulation and segmentation dataset from Kaggle:
 
 [US simulation & segmentation](https://www.kaggle.com/datasets/ignaciorlando/ussimandsegm)
 
-Use the real ultrasound image directory as input. In the development setup this was:
-
-```text
-/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images
-```
+Use the real ultrasound image (RUS) directory as input.
 
 The current loader reads `.jpg` files from the provided directory.
 
@@ -144,51 +135,18 @@ images-l2.npy
 images-r2.npy
 ```
 
-## Running The CLI Demo
-
-Run the packaged fetal brain example:
-
-```bash
-python demo.py \
-  --dataset fetal_brain \
-  --input data/fetal_brain/test_3d.nii.gz \
-  --output outputs/fetal_brain
-```
-
-Run abdominal ultrasound:
-
-```bash
-python demo.py \
-  --dataset abdominal \
-  --input /path/to/abdominal_US/RUS/images \
-  --output outputs/abdominal
-```
-
-Run synthetic liver ultrasound:
-
-```bash
-python demo.py \
-  --dataset synthetic_liver \
-  --input /path/to/synthetic_testing \
-  --output outputs/synthetic_liver
-```
-
-Use `--silent` to suppress non-essential plots and intermediate training-statistic visualization:
-
-```bash
-python demo.py --dataset fetal_brain --input data/fetal_brain/test_3d.nii.gz --output outputs/fetal_brain --silent
-```
-
-For abdominal stacks, the script asks how many slices to process because scanner-geometry estimation can require manual inspection when the fan edges are unclear.
-
-The command line interface and the Gradio application both call the shared inference routines in `src/inference.py`. This keeps a single implementation of the RFlash training and rendering pipeline.
-
 ## Running The Gradio Interface
 
 Start the web application with:
 
 ```bash
 python app.py
+```
+
+For information on parameters, run:
+
+```bash
+python app.py --help
 ```
 
 By default the app listens on `0.0.0.0:7860` and writes outputs to:
@@ -248,6 +206,50 @@ Processed output formats:
 
 - Volumes can be exported as `.nii.gz` or `.mha`.
 - 2D outputs can be exported as `.nii.gz`, `.mha`, or a zip archive of `.png` or `.jpg` slices.
+  
+### Using the graphical user interface on a local machine
+
+If you use the app on a local machine with a GPU, please tick the box `advanced settings`. Instead of uploading the data you can use absolute file paths for input and output.
+
+
+## Running The CLI Demo
+
+Run the packaged fetal brain example:
+
+```bash
+python demo.py \
+  --dataset fetal_brain \
+  --input data/fetal_brain/test_3d.nii.gz \
+  --output outputs/fetal_brain
+```
+
+Run abdominal ultrasound:
+
+```bash
+python demo.py \
+  --dataset abdominal \
+  --input /path/to/abdominal_US/RUS/images \
+  --output outputs/abdominal
+```
+
+Run synthetic liver ultrasound:
+
+```bash
+python demo.py \
+  --dataset synthetic_liver \
+  --input /path/to/synthetic_testing \
+  --output outputs/synthetic_liver
+```
+
+Use `--silent` to suppress non-essential plots and intermediate training-statistic visualization:
+
+```bash
+python demo.py --dataset fetal_brain --input data/fetal_brain/test_3d.nii.gz --output outputs/fetal_brain --silent
+```
+
+For abdominal stacks, the script asks how many slices to process because scanner-geometry estimation can require manual inspection when the fan edges are unclear.
+
+The command line interface and the Gradio application both call the shared inference routines in `src/inference.py`. This keeps a single implementation of the RFlash training and rendering pipeline.
 
 ## Local Testing
 

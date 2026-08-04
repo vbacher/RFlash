@@ -92,6 +92,9 @@ class GeometryWorkflowState:
     current_overlay: str | None = None
     completed: bool = False
     volume_geometry: Any | None = None
+    volume_data: np.ndarray | None = None
+    volume_spacing_mm: np.ndarray | None = None
+    output_dir: Path | None = None
 
 
 def build_interface(default_output_dir: Path) -> gr.Blocks:
@@ -100,6 +103,14 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
     with gr.Blocks(title="RFlash") as app:
         gr.Markdown("# RFlash")
         gr.Markdown("Run RFlash on a 3D ultrasound volume, a stack of 2D images, or a single 2D image.")
+        gr.Markdown(
+            "Upload your own data or use the "
+            "[fetal brain](https://github.com/vbacher/RFlash/tree/main/data/fetal_brain), "
+            "[abdominal ultrasound](https://www.kaggle.com/datasets/ignaciorlando/ussimandsegm), or "
+            "[synthetic liver](https://github.com/magdalena-wysocki/ultra-nerf/tree/main/data/synthetic_testing) "
+            "datasets. For more information on the data please refer to the "
+            "[GitHub Repo](https://github.com/vbacher/RFlash/blob/main/README.md)."
+        )
 
         geometry_state = gr.State(None)
 
@@ -112,10 +123,7 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                     file_types=[".mha", ".nii", ".gz", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".npy"],
                     height=180,
                 )
-                server_path = gr.Textbox(
-                    label="Or use a server-side path",
-                    placeholder="/path/to/volume.mha, /path/to/images, /path/to/stack.nii.gz, or /path/to/images.npy",
-                )
+
                 input_kind = gr.Radio(
                     choices=[INPUT_VOLUME, INPUT_STACK],
                     value=INPUT_VOLUME,
@@ -145,17 +153,24 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                     value=FORMAT_NII,
                     label="Processed output format",
                 )
-                output_dir = gr.Textbox(
-                    label="Output directory",
-                    value=str(default_output_dir),
-                )
+
                 accepted_types = gr.Markdown(value=_accepted_data_message(INPUT_VOLUME, PROBE_CURVILINEAR))
 
-                use_default_params = gr.Checkbox(
-                    label="Use default training parameters",
-                    value=True,
+                advanced = gr.Checkbox(
+                    label="Advanced settings",
+                    value=False,
                 )
-                with gr.Group(visible=False) as manual_params:
+
+                with gr.Group(visible=False) as advanced_settings:
+                    server_path = gr.Textbox(
+                        label="Server-side input path",
+                        placeholder="/path/to/volume.mha, /path/to/images, /path/to/stack.nii.gz, or /path/to/images.npy",
+                    )
+                    output_dir = gr.Textbox(
+                        label="Output directory",
+                        value="" if default_output_dir == Path("outputs/gradio") else str(default_output_dir),
+                        placeholder="Optional output directory (a new temporary folder is used when empty)",
+                    )
                     max_epochs = gr.Number(label="Max epochs", value=200, precision=0, minimum=1)
                     learning_rate = gr.Number(label="Learning rate", value=0.02, precision=6, minimum=1e-6)
                     lambda_train = gr.Number(label="L2 weight", value=0.95, precision=4, minimum=0.0, maximum=1.0)
@@ -163,18 +178,11 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                     batch_size = gr.Number(label="Batch size", value=160, precision=0, minimum=1)
                     lr_patience = gr.Number(label="LR scheduler patience", value=4, precision=0, minimum=1)
 
-                start_geometry_button = gr.Button("Estimate geometry", variant="secondary")
-
                 run_button = gr.Button("Run RFlash", variant="primary")
 
             with gr.Column(scale=2):
                 status = gr.Textbox(label="Status", interactive=False)
-                geometry_gallery = gr.Gallery(label="Geometry review", columns=2, height=360)
-                confirm_volume_geometry = gr.Checkbox(
-                    label="I confirm the displayed geometry",
-                    value=False,
-                    visible=True,
-                )
+                geometry_gallery = gr.Gallery(label="Geometry review", columns=2, height=360, visible=False)
                 with gr.Row():
                     accept_geometry_button = gr.Button("Accept geometry", visible=False)
                     reject_geometry_button = gr.Button("Reject and try next", visible=False)
@@ -185,38 +193,43 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
         input_kind.change(
             _update_selection_controls,
             inputs=[input_kind, probe],
-            outputs=[probe, geometry_mode, num_slices, output_format, confirm_volume_geometry, accepted_types],
+            outputs=[probe, geometry_mode, num_slices, output_format, accepted_types],
         )
         probe.change(
             _update_selection_controls,
             inputs=[input_kind, probe],
-            outputs=[probe, geometry_mode, num_slices, output_format, confirm_volume_geometry, accepted_types],
+            outputs=[probe, geometry_mode, num_slices, output_format, accepted_types],
         )
-        use_default_params.change(
-            _toggle_manual_params,
-            inputs=[use_default_params],
-            outputs=[manual_params],
-        )
-        start_geometry_button.click(
-            _start_geometry_workflow,
-            inputs=[uploaded_files, server_path, input_kind, probe, geometry_mode, num_slices, output_dir],
-            outputs=[
-                geometry_state,
-                geometry_gallery,
-                status,
-                confirm_volume_geometry,
-                accept_geometry_button,
-                reject_geometry_button,
-            ],
+        advanced.change(
+            _toggle_advanced_params,
+            inputs=[advanced],
+            outputs=[advanced_settings],
         )
         accept_geometry_button.click(
-            _accept_geometry_candidate,
-            inputs=[geometry_state],
+            _accept_geometry_and_maybe_run,
+            inputs=[
+                uploaded_files,
+                server_path,
+                input_kind,
+                probe,
+                output_format,
+                output_dir,
+                geometry_state,
+                advanced,
+                max_epochs,
+                learning_rate,
+                lambda_train,
+                compression,
+                batch_size,
+                lr_patience,
+            ],
             outputs=[
+                output_gallery,
+                download_output,
+                status,
+                training_curve,
                 geometry_state,
                 geometry_gallery,
-                status,
-                confirm_volume_geometry,
                 accept_geometry_button,
                 reject_geometry_button,
             ],
@@ -228,23 +241,23 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                 geometry_state,
                 geometry_gallery,
                 status,
-                confirm_volume_geometry,
                 accept_geometry_button,
                 reject_geometry_button,
             ],
         )
         run_button.click(
-            _run_rflash_for_interface,
+            _run_or_prepare_geometry,
             inputs=[
                 uploaded_files,
                 server_path,
                 input_kind,
                 probe,
+                geometry_mode,
+                num_slices,
                 output_format,
                 output_dir,
-                confirm_volume_geometry,
                 geometry_state,
-                use_default_params,
+                advanced,
                 max_epochs,
                 learning_rate,
                 lambda_train,
@@ -252,7 +265,16 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                 batch_size,
                 lr_patience,
             ],
-            outputs=[output_gallery, download_output, status, training_curve],
+            outputs=[
+                output_gallery,
+                download_output,
+                status,
+                training_curve,
+                geometry_state,
+                geometry_gallery,
+                accept_geometry_button,
+                reject_geometry_button,
+            ],
         )
 
     app.queue()
@@ -264,22 +286,25 @@ def _update_selection_controls(input_kind: str, probe: str) -> tuple:
 
     stack_selected = input_kind == INPUT_STACK
     curvilinear_selected = stack_selected and probe == PROBE_CURVILINEAR
-    output_choices = [FORMAT_NII, FORMAT_MHA] if input_kind == INPUT_VOLUME else [FORMAT_NII, FORMAT_MHA, FORMAT_ZIP_PNG, FORMAT_ZIP_JPG]
+    output_choices = (
+        [FORMAT_NII, FORMAT_MHA]
+        if input_kind == INPUT_VOLUME
+        else [FORMAT_NII, FORMAT_MHA, FORMAT_ZIP_PNG, FORMAT_ZIP_JPG]
+    )
     default_output = FORMAT_NII
     return (
         gr.update(visible=stack_selected),
         gr.update(visible=curvilinear_selected),
         gr.update(visible=curvilinear_selected, value=1),
         gr.update(choices=output_choices, value=default_output),
-        gr.update(visible=input_kind == INPUT_VOLUME, value=False),
         _accepted_data_message(input_kind, probe),
     )
 
 
-def _toggle_manual_params(use_default_params: bool) -> gr.Group:
-    """Show manual parameter controls only when requested."""
+def _toggle_advanced_params(advanced: bool) -> gr.Group:
+    """Show advanced settings only when requested."""
 
-    return gr.update(visible=not use_default_params)
+    return gr.update(visible=advanced)
 
 
 def _accepted_data_message(input_kind: str, probe: str) -> str:
@@ -309,7 +334,7 @@ def _accepted_data_message(input_kind: str, probe: str) -> str:
     )
 
 
-def _start_geometry_workflow(
+def _prepare_geometry_workflow(
     uploaded_files: list[str] | None,
     server_path: str,
     input_kind: str,
@@ -317,8 +342,8 @@ def _start_geometry_workflow(
     geometry_mode: str,
     num_slices: float,
     output_dir: str,
-) -> tuple[GeometryWorkflowState | None, list[str], str, gr.Checkbox, gr.Button, gr.Button]:
-    """Start or refresh geometry estimation for the current selection."""
+) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
+    """Estimate scanner geometry and present the current candidate for review."""
 
     resolved_input = _resolve_input(uploaded_files, server_path)
     output_root = _resolve_output_dir(output_dir)
@@ -337,22 +362,18 @@ def _start_geometry_workflow(
             completed=True,
             volume_geometry=geometry,
             overlay_paths=_find_geometry_overlays(overlay_dir),
+            volume_data=np.asarray(volume),
+            volume_spacing_mm=spacing_mm,
+            current_geometry=geometry,
+            output_dir=output_root,
         )
-        return (
-            state,
-            state.overlay_paths,
-            "Estimated 3D scanner geometry. Please inspect the overlays and confirm before running.",
-            gr.update(visible=True, value=False),
-            gr.update(visible=False),
-            gr.update(visible=False),
-        )
+        return _geometry_workflow_response(state)
 
     if probe != PROBE_CURVILINEAR:
         return (
             None,
-            [],
+            gr.update(value=[], visible=False),
             "Linear-probe inputs do not require scanner geometry estimation. You can proceed directly to training.",
-            gr.update(visible=False, value=True),
             gr.update(visible=False),
             gr.update(visible=False),
         )
@@ -367,6 +388,7 @@ def _start_geometry_workflow(
         stack_data=stack,
         stack_shape=tuple(stack.shape),
         candidate_indices=list(range(stack.shape[0])),
+        output_dir=output_root,
     )
     state = _prepare_next_candidate(state, stack, overlay_dir)
     return _geometry_workflow_response(state)
@@ -374,13 +396,22 @@ def _start_geometry_workflow(
 
 def _accept_geometry_candidate(
     geometry_state: GeometryWorkflowState | None,
-) -> tuple[GeometryWorkflowState | None, list[str], str, gr.Checkbox, gr.Button, gr.Button]:
-    """Accept the currently displayed geometry estimate."""
+) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
+    """Accept the current estimate and advance the review workflow."""
 
     if geometry_state is None or geometry_state.current_geometry is None:
         raise gr.Error("No geometry candidate is active. Please estimate geometry first.")
 
     state = geometry_state
+    if state.input_kind == INPUT_VOLUME:
+        return (
+            state,
+            gr.update(value=state.overlay_paths, visible=True),
+            "Volume geometry accepted. Starting RFlash.",
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+
     if state.geometry_mode == GEOMETRY_SHARED:
         state.accepted_geometries = [state.current_geometry for _ in range(state.target_count)]
         state.accepted_indices = list(range(state.target_count))
@@ -398,21 +429,47 @@ def _accept_geometry_candidate(
         return _geometry_workflow_response(state)
 
     stack = _reload_stack_from_state(state)
-    overlay_dir = Path(state.current_overlay).parent if state.current_overlay is not None else Path("outputs/gradio/intermediate_images")
+    overlay_dir = (
+        Path(state.current_overlay).parent
+        if state.current_overlay is not None
+        else Path("outputs/gradio/intermediate_images")
+    )
     state = _prepare_next_candidate(state, stack, overlay_dir)
     return _geometry_workflow_response(state)
 
 
 def _reject_geometry_candidate(
     geometry_state: GeometryWorkflowState | None,
-) -> tuple[GeometryWorkflowState | None, list[str], str, gr.Checkbox, gr.Button, gr.Button]:
+) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
     """Reject the current geometry estimate and move to the next candidate."""
 
     if geometry_state is None:
-        raise gr.Error("No geometry workflow is active. Please estimate geometry first.")
+        raise gr.Error("No geometry workflow is active. Press Run RFlash to start geometry estimation.")
+
+    if geometry_state.input_kind == INPUT_VOLUME:
+        if geometry_state.volume_data is None or geometry_state.volume_spacing_mm is None:
+            raise gr.Error("The volume geometry review became stale. Press Run RFlash to restart it.")
+        overlay_dir = (
+            Path(geometry_state.overlay_paths[0]).parent
+            if geometry_state.overlay_paths
+            else Path("outputs/gradio/intermediate_images")
+        )
+        geometry = estimate_scanner_geometry_volume(
+            geometry_state.volume_data,
+            geometry_state.volume_spacing_mm,
+            overlay_dir=overlay_dir,
+            verbose=False,
+        )
+        geometry_state.volume_geometry = geometry
+        geometry_state.overlay_paths = _find_geometry_overlays(overlay_dir)
+        return _geometry_workflow_response(geometry_state)
 
     stack = _reload_stack_from_state(geometry_state)
-    overlay_dir = Path(geometry_state.current_overlay).parent if geometry_state.current_overlay is not None else Path("outputs/gradio/intermediate_images")
+    overlay_dir = (
+        Path(geometry_state.current_overlay).parent
+        if geometry_state.current_overlay is not None
+        else Path("outputs/gradio/intermediate_images")
+    )
     state = _prepare_next_candidate(geometry_state, stack, overlay_dir)
     return _geometry_workflow_response(state)
 
@@ -449,17 +506,16 @@ def _prepare_next_candidate(
 
 def _geometry_workflow_response(
     state: GeometryWorkflowState,
-) -> tuple[GeometryWorkflowState, list[str], str, gr.Checkbox, gr.Button, gr.Button]:
+) -> tuple[GeometryWorkflowState, Any, str, gr.Button, gr.Button]:
     """Build the UI response for the current geometry workflow state."""
 
     if state.input_kind == INPUT_VOLUME:
         return (
             state,
-            state.overlay_paths,
-            "Estimated 3D scanner geometry. Please confirm it before running.",
-            gr.update(visible=True, value=False),
-            gr.update(visible=False),
-            gr.update(visible=False),
+            gr.update(value=state.overlay_paths, visible=True),
+            "Estimated 3D scanner geometry. Please inspect it and accept or reject it.",
+            gr.update(visible=True),
+            gr.update(visible=True),
         )
 
     if state.completed:
@@ -475,9 +531,15 @@ def _geometry_workflow_response(
             )
         return (
             state,
-            [state.accepted_overlays[-1]] if state.accepted_overlays else ([state.current_overlay] if state.current_overlay else []),
+            gr.update(
+                value=(
+                    [state.accepted_overlays[-1]]
+                    if state.accepted_overlays
+                    else ([state.current_overlay] if state.current_overlay else [])
+                ),
+                visible=False,
+            ),
             status,
-            gr.update(visible=False, value=True),
             gr.update(visible=False),
             gr.update(visible=False),
         )
@@ -496,12 +558,110 @@ def _geometry_workflow_response(
     overlays = [state.current_overlay] if state.current_overlay is not None else []
     return (
         state,
-        overlays,
+        gr.update(value=overlays, visible=True),
         status,
-        gr.update(visible=False, value=False),
         gr.update(visible=True),
         gr.update(visible=True),
     )
+
+
+def _run_or_prepare_geometry(
+    uploaded_files: list[str] | None,
+    server_path: str,
+    input_kind: str,
+    probe: str,
+    geometry_mode: str,
+    num_slices: float,
+    output_format: str,
+    output_dir: str,
+    geometry_state: GeometryWorkflowState | None,
+    advanced: bool,
+    max_epochs: float,
+    learning_rate: float,
+    lambda_train: float,
+    compression: float,
+    batch_size: float,
+    lr_patience: float,
+    progress: gr.Progress = gr.Progress(track_tqdm=False),
+):
+    """Start geometry review when needed, otherwise start shadow removal."""
+
+    geometry_required = input_kind == INPUT_VOLUME or (input_kind == INPUT_STACK and probe == PROBE_CURVILINEAR)
+    if geometry_required and (geometry_state is None or not geometry_state.completed):
+        state, gallery, status, accept, reject = _prepare_geometry_workflow(
+            uploaded_files,
+            server_path,
+            input_kind,
+            probe,
+            geometry_mode,
+            num_slices,
+            output_dir,
+        )
+        yield [], None, status, None, state, gallery, accept, reject
+        return
+
+    for result in _run_rflash_for_interface(
+        uploaded_files,
+        server_path,
+        input_kind,
+        probe,
+        output_format,
+        output_dir,
+        geometry_state,
+        advanced,
+        max_epochs,
+        learning_rate,
+        lambda_train,
+        compression,
+        batch_size,
+        lr_patience,
+        progress,
+    ):
+        yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
+
+
+def _accept_geometry_and_maybe_run(
+    uploaded_files: list[str] | None,
+    server_path: str,
+    input_kind: str,
+    probe: str,
+    output_format: str,
+    output_dir: str,
+    geometry_state: GeometryWorkflowState | None,
+    advanced: bool,
+    max_epochs: float,
+    learning_rate: float,
+    lambda_train: float,
+    compression: float,
+    batch_size: float,
+    lr_patience: float,
+    progress: gr.Progress = gr.Progress(track_tqdm=False),
+):
+    """Accept geometry and immediately run RFlash once review is complete."""
+
+    state, gallery, status, accept, reject = _accept_geometry_candidate(geometry_state)
+    if not state.completed:
+        yield [], None, status, None, state, gallery, accept, reject
+        return
+
+    for result in _run_rflash_for_interface(
+        uploaded_files,
+        server_path,
+        input_kind,
+        probe,
+        output_format,
+        output_dir,
+        state,
+        advanced,
+        max_epochs,
+        learning_rate,
+        lambda_train,
+        compression,
+        batch_size,
+        lr_patience,
+        progress,
+    ):
+        yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
 
 
 def _run_rflash_for_interface(
@@ -511,9 +671,8 @@ def _run_rflash_for_interface(
     probe: str,
     output_format: str,
     output_dir: str,
-    confirm_volume_geometry: bool,
     geometry_state: GeometryWorkflowState | None,
-    use_default_params: bool,
+    advanced: bool,
     max_epochs: float,
     learning_rate: float,
     lambda_train: float,
@@ -525,20 +684,32 @@ def _run_rflash_for_interface(
     """Run RFlash and stream progress updates back into the interface."""
 
     resolved_input = _resolve_input(uploaded_files, server_path)
-    output_root = _resolve_output_dir(output_dir)
+    output_root = (
+        geometry_state.output_dir
+        if geometry_state is not None and geometry_state.output_dir is not None
+        else _resolve_output_dir(output_dir)
+    )
     device = select_device(prefer_cuda=True)
-    overrides = None if use_default_params else _collect_training_overrides(
-        max_epochs=max_epochs,
-        learning_rate=learning_rate,
-        lambda_train=lambda_train,
-        compression=compression,
-        batch_size=batch_size,
-        lr_patience=lr_patience,
+    overrides = (
+        None
+        if not advanced
+        else _collect_training_overrides(
+            max_epochs=max_epochs,
+            learning_rate=learning_rate,
+            lambda_train=lambda_train,
+            compression=compression,
+            batch_size=batch_size,
+            lr_patience=lr_patience,
+        )
     )
 
-    if input_kind == INPUT_VOLUME and (geometry_state is None or geometry_state.volume_geometry is None or not confirm_volume_geometry):
-        raise gr.Error("Please estimate and confirm the volume geometry before running RFlash.")
-    if input_kind == INPUT_STACK and probe == PROBE_CURVILINEAR and (geometry_state is None or not geometry_state.completed):
+    if input_kind == INPUT_VOLUME and (geometry_state is None or geometry_state.volume_geometry is None):
+        raise gr.Error("Please press Run RFlash to estimate and review the volume geometry first.")
+    if (
+        input_kind == INPUT_STACK
+        and probe == PROBE_CURVILINEAR
+        and (geometry_state is None or not geometry_state.completed)
+    ):
         raise gr.Error("Please finish the curvilinear geometry review before running RFlash.")
 
     event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -649,11 +820,18 @@ def _resolve_input(uploaded_files: list[str] | None, server_path: str) -> str | 
     """Resolve uploaded files or a server-side path to an inference input."""
 
     if server_path.strip():
-        return Path(server_path.strip()).expanduser()
+        path = Path(server_path.strip()).expanduser()
+        if not path.exists():
+            raise gr.Error(f"Input path does not exist: {path}")
+        return path
 
     files = _as_path_list(uploaded_files)
     if not files:
         raise gr.Error("Please upload data or enter a server-side path.")
+    missing_files = [path for path in files if not path.exists()]
+    if missing_files:
+        missing_text = ", ".join(str(path) for path in missing_files)
+        raise gr.Error(f"Uploaded input path does not exist: {missing_text}")
     if len(files) == 1:
         return files[0]
     return files
@@ -754,12 +932,20 @@ def _export_processed_output(result: RFlashOutput, output_format: str) -> Path:
 
     if output_format == FORMAT_NII:
         path = export_dir / "shadow_reduced_output.nii.gz"
-        save_volume(_ensure_volume_for_export(processed_u8), path, header=result.header if result.is_volume else get_medpy_header(result.spacing_mm))
+        save_volume(
+            _ensure_volume_for_export(processed_u8),
+            path,
+            header=result.header if result.is_volume else get_medpy_header(result.spacing_mm),
+        )
         return path
 
     if output_format == FORMAT_MHA:
         path = export_dir / "shadow_reduced_output.mha"
-        save_volume(_ensure_volume_for_export(processed_u8), path, header=result.header if result.is_volume else get_medpy_header(result.spacing_mm))
+        save_volume(
+            _ensure_volume_for_export(processed_u8),
+            path,
+            header=result.header if result.is_volume else get_medpy_header(result.spacing_mm),
+        )
         return path
 
     image_suffix = ".png" if output_format == FORMAT_ZIP_PNG else ".jpg"
@@ -777,7 +963,9 @@ def _export_processed_output(result: RFlashOutput, output_format: str) -> Path:
         image_path = image_dir / f"slice_{slice_idx:03d}{image_suffix}"
         Image.fromarray(slice_array).save(image_path, quality=95)
 
-    zip_path = export_dir / ("shadow_reduced_slices_png.zip" if image_suffix == ".png" else "shadow_reduced_slices_jpg.zip")
+    zip_path = export_dir / (
+        "shadow_reduced_slices_png.zip" if image_suffix == ".png" else "shadow_reduced_slices_jpg.zip"
+    )
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for image_path in sorted(image_dir.glob(f"*{image_suffix}")):
             archive.write(image_path, arcname=image_path.name)
@@ -816,7 +1004,9 @@ def _write_output_previews(result: RFlashOutput) -> list[str]:
         for label, volume in (("original", result.original_data), ("shadow_reduced", result.shadow_reduced_data)):
             for axis, slice_idx, image, aspect in _representative_volume_slices(volume, result.spacing_mm):
                 output_path = preview_dir / f"{label}_{axis}_{slice_idx:03d}.png"
-                _save_preview_image(image, output_path, f"{label.replace('_', ' ')} {axis} slice {slice_idx}", aspect=aspect)
+                _save_preview_image(
+                    image, output_path, f"{label.replace('_', ' ')} {axis} slice {slice_idx}", aspect=aspect
+                )
                 preview_paths.append(str(output_path))
         return preview_paths
 
@@ -832,7 +1022,7 @@ def _representative_volume_slices(
     volume: np.ndarray,
     spacing_mm: np.ndarray | list[float],
 ) -> list[tuple[str, int, np.ndarray, float]]:
-    """Return the three middle slices for each volume dimension."""
+    """Return one centre slice for each of the three volume dimensions."""
 
     volume_array = np.asarray(volume)
     spacing = np.asarray(spacing_mm, dtype=float)
@@ -840,18 +1030,16 @@ def _representative_volume_slices(
     axis_names = ("axis0", "axis1", "axis2")
     for axis, axis_name in enumerate(axis_names):
         mid = volume_array.shape[axis] // 2
-        candidate_indices = sorted(set(max(0, min(volume_array.shape[axis] - 1, mid + offset)) for offset in (-1, 0, 1)))
-        for slice_idx in candidate_indices:
-            if axis == 0:
-                image = volume_array[slice_idx, :, :]
-                aspect = _spacing_aspect(spacing[1], spacing[2])
-            elif axis == 1:
-                image = volume_array[:, slice_idx, :]
-                aspect = _spacing_aspect(spacing[0], spacing[2])
-            else:
-                image = volume_array[:, :, slice_idx]
-                aspect = _spacing_aspect(spacing[0], spacing[1])
-            results.append((axis_name, slice_idx, image, aspect))
+        if axis == 0:
+            image = volume_array[mid, :, :]
+            aspect = _spacing_aspect(spacing[1], spacing[2])
+        elif axis == 1:
+            image = volume_array[:, mid, :]
+            aspect = _spacing_aspect(spacing[0], spacing[2])
+        else:
+            image = volume_array[:, :, mid]
+            aspect = _spacing_aspect(spacing[0], spacing[1])
+        results.append((axis_name, mid, image, aspect))
     return results
 
 
@@ -859,7 +1047,7 @@ def _representative_stack_slices(
     stack: np.ndarray,
     spacing_mm: np.ndarray | list[float],
 ) -> list[tuple[int, np.ndarray, float]]:
-    """Return a few representative slices from a stack-like output."""
+    """Return three reproducibly selected representative stack slices."""
 
     stack_array = np.asarray(stack)
     spacing = np.asarray(spacing_mm, dtype=float)
@@ -867,7 +1055,8 @@ def _representative_stack_slices(
     if stack_array.ndim == 2:
         return [(0, stack_array, aspect)]
     last_axis = stack_array.shape[-1]
-    indices = sorted(set([last_axis // 4, last_axis // 2, (3 * last_axis) // 4]))
+    rng = np.random.default_rng()
+    indices = sorted(rng.choice(last_axis, size=min(3, last_axis), replace=False).tolist())
     return [(idx, stack_array[..., idx], aspect) for idx in indices]
 
 
