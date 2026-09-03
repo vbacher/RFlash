@@ -172,6 +172,9 @@ The app supports two ways to provide data:
 - Upload one or more files through the browser.
 - Enter a server-side path when the data already exists on the remote machine.
 
+The packaged `data/fetal_brain/fetal-brain-demo.mha` volume is preloaded by default,
+so the demo can be started immediately by pressing **Run RFlash**.
+
 The interface asks whether the data is a 3D volume or 2D image data. For 2D data it asks whether the probe is linear or curvilinear. Curvilinear inputs require scanner geometry estimation; the app displays geometry overlays and lets the user accept or reject candidate slices before training.
 
 Accepted inputs in the web interface:
@@ -180,7 +183,7 @@ Accepted inputs in the web interface:
 - 2D stack, linear probe: one or more image files, a stack saved as `.mha`, `.nii`, or `.nii.gz`, or synthetic-liver style `.npy` input.
 - 2D stack, curvilinear probe: one or more image files, or a stack saved as `.mha`, `.nii`, or `.nii.gz`.
 
-The app also allows the user to keep the default training parameters or override the main settings manually before running RFlash. During training, the Gradio progress bar is driven by training iterations rather than estimated seconds, and the loss, L2, and SSIM curves update live in the interface.
+The app also allows the user to keep the default training parameters or override the main settings manually before running RFlash. During training, the Gradio progress bar reports training epochs, and the loss, L2, and SSIM curves update live in the interface.
 
 Sharing is configurable and is disabled by default. To enable a Gradio share link:
 
@@ -205,7 +208,7 @@ The Gradio path prefers CUDA when available. If CUDA is not available it falls b
 Processed output formats:
 
 - Volumes can be exported as `.nii.gz` or `.mha`.
-- 2D outputs can be exported as `.nii.gz`, `.mha`, or a zip archive of `.png` or `.jpg` slices.
+- 2D outputs can be exported as `.nii.gz`, `.mha`, an `.mp4` video, or a zip archive of `.png` or `.jpg` slices.
   
 ### Using the graphical user interface on a local machine
 

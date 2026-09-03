@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import cv2
 import gradio as gr
 import matplotlib.pyplot as plt
 import numpy as np
@@ -70,6 +71,7 @@ FORMAT_NII = "nii.gz"
 FORMAT_MHA = "mha"
 FORMAT_ZIP_PNG = "zip with PNG slices"
 FORMAT_ZIP_JPG = "zip with JPG slices"
+FORMAT_MP4 = "mp4 video"
 
 
 @dataclass
@@ -101,6 +103,10 @@ class GeometryWorkflowState:
 def build_interface(default_output_dir: Path) -> gr.Blocks:
     """Create the Gradio Blocks interface."""
 
+    default_input = Path(__file__).resolve().parent / "data" / "fetal_brain" / "fetal-brain-demo.mha"
+    # ``file_count="multiple"`` requires a list-shaped default in Gradio.
+    default_input_value = [str(default_input)] if default_input.exists() else None
+
     with gr.Blocks(title="RFlash") as app:
         gr.Markdown("# RFlash")
         gr.Markdown("Run RFlash on a 3D ultrasound volume, a stack of 2D images, or a single 2D image.")
@@ -120,6 +126,7 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                 uploaded_files = gr.File(
                     label="Upload data",
                     file_count="multiple",
+                    value=default_input_value,
                     type="filepath",
                     file_types=[".mha", ".nii", ".gz", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".npy"],
                     height=180,
@@ -183,7 +190,13 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
 
             with gr.Column(scale=2):
                 status = gr.Textbox(label="Status", interactive=False, lines=12, max_lines=30)
-                geometry_gallery = gr.Gallery(label="Geometry review", columns=2, height=360, visible=False)
+                geometry_gallery = gr.Gallery(
+                    label="Geometry review",
+                    columns=2,
+                    height=360,
+                    object_fit="contain",
+                    visible=False,
+                )
                 with gr.Row():
                     accept_geometry_button = gr.Button("Accept geometry", visible=False)
                     reject_geometry_button = gr.Button("Reject and try next", visible=False)
@@ -290,7 +303,7 @@ def _update_selection_controls(input_kind: str, probe: str) -> tuple:
     output_choices = (
         [FORMAT_NII, FORMAT_MHA]
         if input_kind == INPUT_VOLUME
-        else [FORMAT_NII, FORMAT_MHA, FORMAT_ZIP_PNG, FORMAT_ZIP_JPG]
+        else [FORMAT_NII, FORMAT_MHA, FORMAT_ZIP_PNG, FORMAT_ZIP_JPG, FORMAT_MP4]
     )
     default_output = FORMAT_NII
     return (
@@ -324,6 +337,7 @@ def _accepted_data_message(input_kind: str, probe: str) -> str:
             "- One or more image files: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`.\n"
             "- A stack stored as `.mha`, `.nii`, or `.nii.gz`. The last axis is treated as slice index.\n"
             "- Output can be exported as `.nii.gz`, `.mha`, or a zip archive of `.png` or `.jpg` slices."
+            "\n- An `.mp4` video can also be exported."
         )
 
     return (
@@ -331,7 +345,7 @@ def _accepted_data_message(input_kind: str, probe: str) -> str:
         "- One or more image files: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`.\n"
         "- A stack stored as `.mha`, `.nii`, or `.nii.gz`.\n"
         "- Synthetic liver-style `.npy` input is also supported.\n"
-        "- Output can be exported as `.nii.gz`, `.mha`, or a zip archive of `.png` or `.jpg` slices."
+        "- Output can be exported as `.nii.gz`, `.mha`, a zip archive of `.png` or `.jpg` slices, or an `.mp4` video."
     )
 
 
@@ -815,8 +829,8 @@ def _run_rflash_for_interface(
         if event_type == "progress":
             if payload["phase"] == "batch":
                 progress(
-                    (payload["iteration"], payload["total_iterations"]),
-                    desc=f"Training iteration {payload['iteration']}/{payload['total_iterations']}",
+                    (payload["epoch"], payload["max_epochs"]),
+                    desc=f"Training epoch {payload['epoch']}/{payload['max_epochs']}",
                 )
             else:
                 final_curves = (payload["losses"], payload["l2s"], payload["ssims"])
@@ -827,7 +841,8 @@ def _run_rflash_for_interface(
             if final_curves is not None:
                 curve_path = _write_live_training_curve(output_root, final_curves[0], final_curves[1], final_curves[2])
             download_path = _export_processed_output(result, output_format)
-            preview_paths = _write_output_previews(result)
+            preferred_slice = 88 if _is_fetal_brain_demo_input(resolved_input) else None
+            preview_paths = _write_output_previews(result, preferred_volume_slice=preferred_slice)
             status = f"RFlash finished on {device}. Processed output written to {download_path}."
             yield preview_paths, str(download_path), status, curve_path
             return
@@ -955,6 +970,14 @@ def _is_volume_file(path: Path) -> bool:
     return suffix in {".mha", ".nii", ".nii.gz"}
 
 
+def _is_fetal_brain_demo_input(input_value: str | Path | list[str | Path]) -> bool:
+    """Return whether an input is the packaged fetal-brain demonstration file."""
+
+    if isinstance(input_value, list):
+        return False
+    return Path(input_value).name.lower() == "fetal-brain-demo.mha"
+
+
 def _write_live_training_curve(output_dir: Path, losses: list[float], l2s: list[float], ssims: list[float]) -> str:
     """Write a live-updating training-curve image and return its path."""
 
@@ -988,6 +1011,13 @@ def _export_processed_output(result: RFlashOutput, output_format: str) -> Path:
         )
         return path
 
+    if output_format == FORMAT_MP4:
+        if processed_u8.ndim == 2:
+            slice_arrays = [processed_u8]
+        else:
+            slice_arrays = [processed_u8[..., idx] for idx in range(processed_u8.shape[-1])]
+        return _write_mp4_stack(slice_arrays, export_dir / "shadow_reduced_stack.mp4")
+
     image_suffix = ".png" if output_format == FORMAT_ZIP_PNG else ".jpg"
     image_dir = export_dir / "shadow_reduced_slices"
     if image_dir.exists():
@@ -1012,6 +1042,43 @@ def _export_processed_output(result: RFlashOutput, output_format: str) -> Path:
     return zip_path
 
 
+def _write_mp4_stack(slice_arrays: list[np.ndarray], output_path: Path, fps: float = 10.0) -> Path:
+    """Write a sequence of 8-bit grayscale slices as an MP4 video."""
+
+    if not slice_arrays:
+        raise ValueError("Cannot create an MP4 from an empty image stack.")
+
+    first_frame = np.asarray(slice_arrays[0], dtype=np.uint8)
+    if first_frame.ndim != 2:
+        raise ValueError(f"Expected 2D video frames, got shape {first_frame.shape}.")
+    height, width = first_frame.shape
+    # Common MP4 codecs require even frame dimensions. Edge padding preserves
+    # the image content without changing the displayed intensity range.
+    padded_height = height + height % 2
+    padded_width = width + width % 2
+    writer = cv2.VideoWriter(
+        str(output_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (padded_width, padded_height),
+        True,
+    )
+    if not writer.isOpened():
+        raise RuntimeError("Could not open an MP4 video writer. Check the available OpenCV codecs.")
+
+    try:
+        for slice_array in slice_arrays:
+            frame = np.asarray(slice_array, dtype=np.uint8)
+            if frame.shape != (height, width):
+                raise ValueError("All image stack slices must have the same dimensions for MP4 export.")
+            if padded_height != height or padded_width != width:
+                frame = np.pad(frame, ((0, padded_height - height), (0, padded_width - width)), mode="edge")
+            writer.write(cv2.cvtColor(np.ascontiguousarray(frame), cv2.COLOR_GRAY2BGR))
+    finally:
+        writer.release()
+    return output_path
+
+
 def _to_export_uint8(image: np.ndarray) -> np.ndarray:
     """Convert a result array to the exported 8-bit representation."""
 
@@ -1031,7 +1098,7 @@ def _ensure_volume_for_export(image: np.ndarray) -> np.ndarray:
     return image_array
 
 
-def _write_output_previews(result: RFlashOutput) -> list[str]:
+def _write_output_previews(result: RFlashOutput, preferred_volume_slice: int | None = None) -> list[str]:
     """Write representative output previews for the interface."""
 
     preview_dir = result.output_dir / "web_previews"
@@ -1046,7 +1113,9 @@ def _write_output_previews(result: RFlashOutput) -> list[str]:
             # output. Re-normalizing each preview slice would change its contrast.
             normalize = label != "shadow_reduced"
             preview_volume = _to_export_uint8(volume) if not normalize else volume
-            for axis, slice_idx, image, aspect in _representative_volume_slices(preview_volume, result.spacing_mm):
+            for axis, slice_idx, image, aspect in _representative_volume_slices(
+                preview_volume, result.spacing_mm, preferred_slice_index=preferred_volume_slice
+            ):
                 output_path = preview_dir / f"{label}_{axis}_{slice_idx:03d}.png"
                 _save_preview_image(
                     image,
@@ -1054,14 +1123,17 @@ def _write_output_previews(result: RFlashOutput) -> list[str]:
                     f"{label.replace('_', ' ')} {axis} slice {slice_idx}",
                     aspect=aspect,
                     normalize=normalize,
+                    rotate_90=True,
                 )
                 preview_paths.append(str(output_path))
         return preview_paths
 
+    selected_slices = _representative_stack_slices(result.original_data, result.spacing_mm)
     for label, stack in (("original", result.original_data), ("shadow_reduced", result.shadow_reduced_data)):
         normalize = label != "shadow_reduced"
         preview_stack = _to_export_uint8(stack) if not normalize else stack
-        for slice_idx, image, aspect in _representative_stack_slices(preview_stack, result.spacing_mm):
+        for slice_idx, _, aspect in selected_slices:
+            image = preview_stack if preview_stack.ndim == 2 else preview_stack[..., slice_idx]
             output_path = preview_dir / f"{label}_slice_{slice_idx:03d}.png"
             _save_preview_image(
                 image,
@@ -1069,6 +1141,7 @@ def _write_output_previews(result: RFlashOutput) -> list[str]:
                 f"{label.replace('_', ' ')} slice {slice_idx}",
                 aspect=aspect,
                 normalize=normalize,
+                rotate_90=False,
             )
             preview_paths.append(str(output_path))
     return preview_paths
@@ -1077,6 +1150,7 @@ def _write_output_previews(result: RFlashOutput) -> list[str]:
 def _representative_volume_slices(
     volume: np.ndarray,
     spacing_mm: np.ndarray | list[float],
+    preferred_slice_index: int | None = None,
 ) -> list[tuple[str, int, np.ndarray, float]]:
     """Return one centre slice for each of the three volume dimensions."""
 
@@ -1084,13 +1158,20 @@ def _representative_volume_slices(
     spacing = np.asarray(spacing_mm, dtype=float)
     results = []
     axis_names = ("axis0", "axis1", "axis2")
+    reverse = False
     for axis, axis_name in enumerate(axis_names):
         mid = volume_array.shape[axis] // 2
+        if axis == 1 and preferred_slice_index is not None:
+            mid = min(max(int(preferred_slice_index), 0), volume_array.shape[axis] - 1)
+            reverse = True
         if axis == 0:
             image = volume_array[mid, :, :]
             aspect = _spacing_aspect(spacing[1], spacing[2])
         elif axis == 1:
-            image = volume_array[:, mid, :]
+            if reverse:
+                image = np.flipud(volume_array[:, mid, :])
+            else:
+                image = volume_array[:, mid, :]
             aspect = _spacing_aspect(spacing[0], spacing[2])
         else:
             image = volume_array[:, :, mid]
@@ -1122,11 +1203,14 @@ def _save_preview_image(
     title: str,
     aspect: float = 1.0,
     normalize: bool = True,
+    rotate_90: bool = False,
 ) -> None:
     """Save one grayscale preview image."""
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    image = np.rot90(image, k=-1)
+    if rotate_90:
+        image = np.rot90(image, k=-1)
+        aspect = 1.0 / aspect if aspect else 1.0
     display_image = normalize_for_display(image) if normalize else image
     ax.imshow(display_image, cmap="gray", aspect=aspect)
     ax.set_title(title)
