@@ -25,6 +25,7 @@ import queue
 import shutil
 import tempfile
 import threading
+import traceback
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -181,7 +182,7 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                 run_button = gr.Button("Run RFlash", variant="primary")
 
             with gr.Column(scale=2):
-                status = gr.Textbox(label="Status", interactive=False)
+                status = gr.Textbox(label="Status", interactive=False, lines=12, max_lines=30)
                 geometry_gallery = gr.Gallery(label="Geometry review", columns=2, height=360, visible=False)
                 with gr.Row():
                     accept_geometry_button = gr.Button("Accept geometry", visible=False)
@@ -235,7 +236,7 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
             ],
         )
         reject_geometry_button.click(
-            _reject_geometry_candidate,
+            _reject_geometry_candidate_for_interface,
             inputs=[geometry_state],
             outputs=[
                 geometry_state,
@@ -334,6 +335,30 @@ def _accepted_data_message(input_kind: str, probe: str) -> str:
     )
 
 
+def _format_gui_error(exc: Exception) -> str:
+    """Format an exception for the Status panel, including its traceback."""
+
+    message = str(exc) or exc.__class__.__name__
+    return f"RFlash failed: {message}\n\n{traceback.format_exc()}"
+
+
+def _reject_geometry_candidate_for_interface(
+    geometry_state: GeometryWorkflowState | None,
+) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
+    """Run geometry rejection and expose failures in the Status panel."""
+
+    try:
+        return _reject_geometry_candidate(geometry_state)
+    except Exception as exc:
+        return (
+            geometry_state,
+            gr.update(value=[], visible=False),
+            _format_gui_error(exc),
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+
+
 def _prepare_geometry_workflow(
     uploaded_files: list[str] | None,
     server_path: str,
@@ -341,7 +366,7 @@ def _prepare_geometry_workflow(
     probe: str,
     geometry_mode: str,
     num_slices: float,
-    output_dir: str,
+    output_dir: str | None,
 ) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
     """Estimate scanner geometry and present the current candidate for review."""
 
@@ -567,13 +592,13 @@ def _geometry_workflow_response(
 
 def _run_or_prepare_geometry(
     uploaded_files: list[str] | None,
-    server_path: str,
+    server_path: str | None,
     input_kind: str,
     probe: str,
     geometry_mode: str,
     num_slices: float,
     output_format: str,
-    output_dir: str,
+    output_dir: str | None,
     geometry_state: GeometryWorkflowState | None,
     advanced: bool,
     max_epochs: float,
@@ -586,47 +611,53 @@ def _run_or_prepare_geometry(
 ):
     """Start geometry review when needed, otherwise start shadow removal."""
 
-    geometry_required = input_kind == INPUT_VOLUME or (input_kind == INPUT_STACK and probe == PROBE_CURVILINEAR)
-    if geometry_required and (geometry_state is None or not geometry_state.completed):
-        state, gallery, status, accept, reject = _prepare_geometry_workflow(
+    try:
+        geometry_required = input_kind == INPUT_VOLUME or (input_kind == INPUT_STACK and probe == PROBE_CURVILINEAR)
+        if geometry_required and (geometry_state is None or not geometry_state.completed):
+            state, gallery, status, accept, reject = _prepare_geometry_workflow(
+                uploaded_files,
+                server_path,
+                input_kind,
+                probe,
+                geometry_mode,
+                num_slices,
+                output_dir,
+            )
+            yield [], None, status, None, state, gallery, accept, reject
+            return
+
+        for result in _run_rflash_for_interface(
             uploaded_files,
             server_path,
             input_kind,
             probe,
-            geometry_mode,
-            num_slices,
+            output_format,
             output_dir,
+            geometry_state,
+            advanced,
+            max_epochs,
+            learning_rate,
+            lambda_train,
+            compression,
+            batch_size,
+            lr_patience,
+            progress,
+        ):
+            yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
+    except Exception as exc:
+        details = _format_gui_error(exc)
+        yield [], None, details, None, None, gr.update(visible=False), gr.update(visible=False), gr.update(
+            visible=False
         )
-        yield [], None, status, None, state, gallery, accept, reject
-        return
-
-    for result in _run_rflash_for_interface(
-        uploaded_files,
-        server_path,
-        input_kind,
-        probe,
-        output_format,
-        output_dir,
-        geometry_state,
-        advanced,
-        max_epochs,
-        learning_rate,
-        lambda_train,
-        compression,
-        batch_size,
-        lr_patience,
-        progress,
-    ):
-        yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
 
 
 def _accept_geometry_and_maybe_run(
     uploaded_files: list[str] | None,
-    server_path: str,
+    server_path: str | None,
     input_kind: str,
     probe: str,
     output_format: str,
-    output_dir: str,
+    output_dir: str | None,
     geometry_state: GeometryWorkflowState | None,
     advanced: bool,
     max_epochs: float,
@@ -639,38 +670,44 @@ def _accept_geometry_and_maybe_run(
 ):
     """Accept geometry and immediately run RFlash once review is complete."""
 
-    state, gallery, status, accept, reject = _accept_geometry_candidate(geometry_state)
-    if not state.completed:
-        yield [], None, status, None, state, gallery, accept, reject
-        return
+    try:
+        state, gallery, status, accept, reject = _accept_geometry_candidate(geometry_state)
+        if not state.completed:
+            yield [], None, status, None, state, gallery, accept, reject
+            return
 
-    for result in _run_rflash_for_interface(
-        uploaded_files,
-        server_path,
-        input_kind,
-        probe,
-        output_format,
-        output_dir,
-        state,
-        advanced,
-        max_epochs,
-        learning_rate,
-        lambda_train,
-        compression,
-        batch_size,
-        lr_patience,
-        progress,
-    ):
-        yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
+        for result in _run_rflash_for_interface(
+            uploaded_files,
+            server_path,
+            input_kind,
+            probe,
+            output_format,
+            output_dir,
+            state,
+            advanced,
+            max_epochs,
+            learning_rate,
+            lambda_train,
+            compression,
+            batch_size,
+            lr_patience,
+            progress,
+        ):
+            yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
+    except Exception as exc:
+        details = _format_gui_error(exc)
+        yield [], None, details, None, geometry_state, gr.update(visible=False), gr.update(visible=False), gr.update(
+            visible=False
+        )
 
 
 def _run_rflash_for_interface(
     uploaded_files: list[str] | None,
-    server_path: str,
+    server_path: str | None,
     input_kind: str,
     probe: str,
     output_format: str,
-    output_dir: str,
+    output_dir: str | None,
     geometry_state: GeometryWorkflowState | None,
     advanced: bool,
     max_epochs: float,
@@ -752,7 +789,9 @@ def _run_rflash_for_interface(
                 )
             event_queue.put(("done", result))
         except Exception as exc:
-            event_queue.put(("error", str(exc)))
+            # The worker runs in another thread, so preserve its traceback before
+            # handing the failure back to the Gradio request thread.
+            event_queue.put(("error", f"{exc}\n\n{traceback.format_exc()}"))
 
     worker = threading.Thread(target=_worker, daemon=True)
     worker.start()
@@ -771,7 +810,7 @@ def _run_rflash_for_interface(
             continue
 
         if event_type == "error":
-            raise gr.Error(payload)
+            raise RuntimeError(payload)
 
         if event_type == "progress":
             if payload["phase"] == "batch":
@@ -816,9 +855,10 @@ def _collect_training_overrides(
     }
 
 
-def _resolve_input(uploaded_files: list[str] | None, server_path: str) -> str | Path | list[str | Path]:
+def _resolve_input(uploaded_files: list[str] | None, server_path: str | None) -> str | Path | list[str | Path]:
     """Resolve uploaded files or a server-side path to an inference input."""
 
+    server_path = server_path or ""
     if server_path.strip():
         path = Path(server_path.strip()).expanduser()
         if not path.exists():
@@ -837,10 +877,10 @@ def _resolve_input(uploaded_files: list[str] | None, server_path: str) -> str | 
     return files
 
 
-def _resolve_output_dir(output_dir: str) -> Path:
+def _resolve_output_dir(output_dir: str | None) -> Path:
     """Resolve the requested output directory."""
 
-    if output_dir.strip():
+    if (output_dir or "").strip():
         return Path(output_dir.strip()).expanduser()
     return Path(tempfile.mkdtemp(prefix="rflash-gradio-"))
 
@@ -1002,18 +1042,34 @@ def _write_output_previews(result: RFlashOutput) -> list[str]:
     preview_paths = []
     if result.is_volume:
         for label, volume in (("original", result.original_data), ("shadow_reduced", result.shadow_reduced_data)):
-            for axis, slice_idx, image, aspect in _representative_volume_slices(volume, result.spacing_mm):
+            # Use the same volume-wide conversion as the downloadable processed
+            # output. Re-normalizing each preview slice would change its contrast.
+            normalize = label != "shadow_reduced"
+            preview_volume = _to_export_uint8(volume) if not normalize else volume
+            for axis, slice_idx, image, aspect in _representative_volume_slices(preview_volume, result.spacing_mm):
                 output_path = preview_dir / f"{label}_{axis}_{slice_idx:03d}.png"
                 _save_preview_image(
-                    image, output_path, f"{label.replace('_', ' ')} {axis} slice {slice_idx}", aspect=aspect
+                    image,
+                    output_path,
+                    f"{label.replace('_', ' ')} {axis} slice {slice_idx}",
+                    aspect=aspect,
+                    normalize=normalize,
                 )
                 preview_paths.append(str(output_path))
         return preview_paths
 
     for label, stack in (("original", result.original_data), ("shadow_reduced", result.shadow_reduced_data)):
-        for slice_idx, image, aspect in _representative_stack_slices(stack, result.spacing_mm):
+        normalize = label != "shadow_reduced"
+        preview_stack = _to_export_uint8(stack) if not normalize else stack
+        for slice_idx, image, aspect in _representative_stack_slices(preview_stack, result.spacing_mm):
             output_path = preview_dir / f"{label}_slice_{slice_idx:03d}.png"
-            _save_preview_image(image, output_path, f"{label.replace('_', ' ')} slice {slice_idx}", aspect=aspect)
+            _save_preview_image(
+                image,
+                output_path,
+                f"{label.replace('_', ' ')} slice {slice_idx}",
+                aspect=aspect,
+                normalize=normalize,
+            )
             preview_paths.append(str(output_path))
     return preview_paths
 
@@ -1060,11 +1116,19 @@ def _representative_stack_slices(
     return [(idx, stack_array[..., idx], aspect) for idx in indices]
 
 
-def _save_preview_image(image: np.ndarray, output_path: Path, title: str, aspect: float = 1.0) -> None:
+def _save_preview_image(
+    image: np.ndarray,
+    output_path: Path,
+    title: str,
+    aspect: float = 1.0,
+    normalize: bool = True,
+) -> None:
     """Save one grayscale preview image."""
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    ax.imshow(normalize_for_display(image), cmap="gray", aspect=aspect)
+    image = np.rot90(image, k=-1)
+    display_image = normalize_for_display(image) if normalize else image
+    ax.imshow(display_image, cmap="gray", aspect=aspect)
     ax.set_title(title)
     ax.axis("off")
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
