@@ -20,6 +20,7 @@ License:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import queue
 import shutil
@@ -100,16 +101,120 @@ class GeometryWorkflowState:
     output_dir: Path | None = None
 
 
+def _load_rflash_theme() -> gr.Theme:
+    """Return the Oxford OMNI / RFlash Gradio theme."""
+
+    primary = gr.themes.Color(
+        c50="#fdf2f7",
+        c100="#fbe5f0",
+        c200="#f6bfd5",
+        c300="#ee8db5",
+        c400="#df4d8c",
+        c500="#bf005f",
+        c600="#a80054",
+        c700="#880045",
+        c800="#6f003a",
+        c900="#5d0033",
+        c950="#370019",
+    )
+
+    secondary = gr.themes.Color(
+        c50="#f2f6fa",
+        c100="#e4edf5",
+        c200="#c5d8e9",
+        c300="#9abbd8",
+        c400="#6998c1",
+        c500="#4170a4",
+        c600="#355d8a",
+        c700="#2d4c70",
+        c800="#293f5d",
+        c900="#26374f",
+        c950="#182334",
+    )
+
+    return gr.themes.Base(
+        primary_hue=primary,
+        secondary_hue=secondary,
+        neutral_hue="gray",
+        font=[
+            gr.themes.GoogleFont("Barlow"),
+            "Arial",
+            "sans-serif",
+        ],
+        font_mono=[
+            gr.themes.GoogleFont("Roboto Mono"),
+            "monospace",
+        ],
+        radius_size="sm",
+    ).set(
+        body_background_fill="#ffffff",
+        body_text_color="#111111",
+        body_text_color_subdued="#555555",
+        background_fill_primary="#ffffff",
+        background_fill_secondary="#fafafa",
+        block_background_fill="#ffffff",
+        block_border_color="#e0e0e0",
+        input_background_fill="#ffffff",
+        input_border_color="#e0e0e0",
+        input_border_color_focus="#bf005f",
+        button_primary_background_fill="#bf005f",
+        button_primary_background_fill_hover="#002147",
+        button_primary_text_color="#ffffff",
+        button_secondary_background_fill="#ffffff",
+        button_secondary_background_fill_hover="#fafafa",
+        link_text_color="#bf005f",
+        link_text_color_hover="#002147",
+        slider_color="#bf005f",
+        loader_color="#bf005f",
+    )
+
+
 def build_interface(default_output_dir: Path) -> gr.Blocks:
     """Create the Gradio Blocks interface."""
 
     default_input = Path(__file__).resolve().parent / "data" / "fetal_brain" / "fetal-brain-demo.mha"
     # ``file_count="multiple"`` requires a list-shaped default in Gradio.
     default_input_value = [str(default_input)] if default_input.exists() else None
+    omni_logo = Path(__file__).resolve().parent / "data" / "images" / "Logo-OMNI.svg"
+    omni_logo_inverted = Path(__file__).resolve().parent / "data" / "images" / "Logo-OMNI_inverted.svg"
+    oxford_logo = Path(__file__).resolve().parent / "data" / "images" / "Logo_OxfordCS.jpeg"
 
     with gr.Blocks(title="RFlash") as app:
-        gr.Markdown("# RFlash")
-        gr.Markdown("Run RFlash on a 3D ultrasound volume, a stack of 2D images, or a single 2D image.")
+        with gr.Row(elem_classes="site-header"):
+            gr.Image(
+                value=str(omni_logo) if omni_logo.exists() else None,
+                show_label=False,
+                buttons=[],
+                container=False,
+                interactive=False,
+                height=58,
+                elem_classes=["header-omni", "header-omni-light"],
+                scale=2,
+            )
+            gr.Image(
+                value=str(omni_logo_inverted) if omni_logo_inverted.exists() else None,
+                show_label=False,
+                buttons=[],
+                container=False,
+                interactive=False,
+                height=58,
+                elem_classes=["header-omni", "header-omni-dark"],
+                scale=2,
+            )
+            gr.Image(
+                value=str(oxford_logo) if oxford_logo.exists() else None,
+                show_label=False,
+                buttons=[],
+                container=False,
+                height=58,
+                elem_classes="header-oxford",
+                scale=0,
+                min_width=125,
+            )
+
+        with gr.Column(elem_classes="hero"):
+            gr.Markdown("# DEMO: Shadow Reduction in Ultrasound Imaging using Radiance Field Decomposition")
+            gr.Markdown("Run RFlash on a 3D ultrasound volume, a stack of 2D images, or a single 2D image.")
         gr.Markdown(
             "Upload your own data or use the "
             "[fetal brain](https://github.com/vbacher/RFlash/tree/main/data/fetal_brain), "
@@ -121,7 +226,7 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
 
         geometry_state = gr.State(None)
 
-        with gr.Row():
+        with gr.Row(elem_classes="section-card"):
             with gr.Column(scale=1):
                 uploaded_files = gr.File(
                     label="Upload data",
@@ -1247,10 +1352,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Launch the Gradio web interface."""
-
     args = parse_args()
     app = build_interface(default_output_dir=args.output)
-    app.launch(server_name=args.server_name, server_port=args.server_port, share=args.share)
+    style_path = Path(__file__).resolve().with_name("app_style.css")
+    app.launch(
+        server_name=args.server_name,
+        server_port=args.server_port,
+        share=args.share,
+        theme=_load_rflash_theme(),
+        css_paths=str(style_path) if style_path.exists() else None,
+    )
 
 
 if __name__ == "__main__":
