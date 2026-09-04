@@ -220,7 +220,8 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
             "[fetal brain](https://github.com/vbacher/RFlash/tree/main/data/fetal_brain), "
             "[abdominal ultrasound](https://www.kaggle.com/datasets/ignaciorlando/ussimandsegm), or "
             "[synthetic liver](https://github.com/magdalena-wysocki/ultra-nerf/tree/main/data/synthetic_testing) "
-            "datasets. For more information on the data please refer to the "
+            "datasets. "
+            "For more information on the data please refer to the "
             "[GitHub Repo](https://github.com/vbacher/RFlash/blob/main/README.md)."
         )
 
