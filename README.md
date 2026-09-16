@@ -17,7 +17,7 @@ source .venv/bin/activate
 pip install -r requirements.txt 
 python demo.py \
   --dataset fetal_brain \
-  --input data/fetal_brain/test_3d.nii.gz \
+  --input data/fetal_brain/fetal-brain-demo.mha \
   --output outputs/fetal_brain
 ```
 
@@ -51,8 +51,7 @@ RFlash/
 ├── demo.py
 ├── data/
 │   └── fetal_brain/
-│       ├── fetal-brain-demo.mha
-│       └── test_3d.nii.gz
+│       └── fetal-brain-demo.mha
 └── src/
     ├── _datatypes.py
     ├── datasets.py
@@ -167,10 +166,14 @@ Then open:
 http://localhost:7860
 ```
 
-The app supports two ways to provide data:
+The app accepts uploaded data:
 
 - Upload one or more files through the browser.
-- Enter a server-side path when the data already exists on the remote machine.
+
+For trusted local deployments only, set `RFLASH_ENABLE_SERVER_PATHS=1` before
+starting the app to reveal server-side input and output path fields. These
+fields are intentionally disabled by default to prevent a public web app from
+accessing arbitrary server files.
 
 The packaged `data/fetal_brain/fetal-brain-demo.mha` volume is preloaded by default,
 so the demo can be started immediately by pressing **Run RFlash**.
@@ -212,7 +215,7 @@ Processed output formats:
   
 ### Using the graphical user interface on a local machine
 
-If you use the app on a local machine with a GPU, please tick the box `advanced settings`. Instead of uploading the data you can use absolute file paths for input and output.
+If you use the app on a trusted local machine with a GPU, tick `advanced settings` to adjust training parameters. To use absolute server paths, start the app with `RFLASH_ENABLE_SERVER_PATHS=1`.
 
 
 ## Running The CLI Demo
@@ -222,7 +225,7 @@ Run the packaged fetal brain example:
 ```bash
 python demo.py \
   --dataset fetal_brain \
-  --input data/fetal_brain/test_3d.nii.gz \
+  --input data/fetal_brain/fetal-brain-demo.mha \
   --output outputs/fetal_brain
 ```
 
@@ -247,7 +250,18 @@ python demo.py \
 Use `--silent` to suppress non-essential plots and intermediate training-statistic visualization:
 
 ```bash
-python demo.py --dataset fetal_brain --input data/fetal_brain/test_3d.nii.gz --output outputs/fetal_brain --silent
+python demo.py --dataset fetal_brain --input data/fetal_brain/fetal-brain-demo.mha --output outputs/fetal_brain --silent
+```
+
+To also write the shadow-reduced result to an exact `.mha` destination, add
+`--output-mha`:
+
+```bash
+python demo.py --dataset fetal_brain \
+  --input data/fetal_brain/fetal-brain-demo.mha \
+  --output outputs/fetal_brain \
+  --output-mha /path/to/shadow_reduced.mha \
+  --silent
 ```
 
 For abdominal stacks, the script asks how many slices to process because scanner-geometry estimation can require manual inspection when the fan edges are unclear.
@@ -268,7 +282,7 @@ Run a small CLI smoke test with the packaged fetal brain example:
 ```bash
 python demo.py \
   --dataset fetal_brain \
-  --input data/fetal_brain/test_3d.nii.gz \
+  --input data/fetal_brain/fetal-brain-demo.mha \
   --output outputs/local_test \
   --silent
 ```
@@ -340,6 +354,12 @@ Update this entry with the final publication details once available.
 ## License
 
 This repository is distributed under the terms described in [LICENSE](LICENSE).
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the repository's disclosure process and
+deployment guidance. Never commit API keys, credentials, private datasets, or
+patient-identifiable data.
 
 ## Contact
 

@@ -107,7 +107,7 @@ def visualize_geometry_overlay(
     image: np.ndarray,
     geometry: SliceTransducerGeometry,
     output_path: str | Path | None = None,
-    show: bool = True,
+    show: bool = False,
 ) -> Path | None:
     """Draw the estimated source, boundary lines, and fan sector over a slice.
 
@@ -115,7 +115,8 @@ def visualize_geometry_overlay(
         image: 2D ultrasound slice.
         geometry: Geometry estimate returned by :func:`estimate_geometry_slice`.
         output_path: Optional path for a saved PNG overlay.
-        show: Whether to open a matplotlib window.
+        show: Retained for backwards compatibility. Geometry previews are
+            always written to ``output_path`` and never open a GUI window.
 
     Returns:
         The saved output path when ``output_path`` is provided.
@@ -194,8 +195,6 @@ def visualize_geometry_overlay(
         saved_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(saved_path, dpi=160, bbox_inches="tight")
 
-    if show:
-        plt.show()
     plt.close(fig)
     return saved_path
 
@@ -227,7 +226,7 @@ def estimate_geometry_slice(
         plane: 2D ultrasound image with a normal curvilinear fan shape.
         spacing_plane_mm: Pixel spacing as ``(row_spacing, column_spacing)``.
         overlay_path: Optional path where the overlay should be saved.
-        verbose: Whether to show the overlay and ask for confirmation in an
+        verbose: Whether to write the overlay and ask for confirmation in an
             interactive terminal.
 
     Returns:

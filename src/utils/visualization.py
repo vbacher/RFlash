@@ -19,18 +19,12 @@ License:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-# FIXME: Remove this global counter in final version which is publicly released. This is only for debugging and visualization of intermediate results.
-ctr = 0
-
-
-# FIXME: remove this global variable in final version which is publicly released. This is only for debugging and visualization of intermediate results.
 def visualize_2d_image(
     img: np.ndarray,
     spacing_mm: np.ndarray = np.asarray([1, 1]),
@@ -38,8 +32,7 @@ def visualize_2d_image(
     f_name=None,
     file=None,
 ) -> None:
-    # FIXME: Remove in final version which is publicly released. This function is only for debugging and visualization of intermediate results.
-    """THIS FUNCTION IS ONLY FOR DEBUGGING"""
+    """Save a 2D image visualization without opening a matplotlib window."""
 
     if img.ndim == 2:
         height, width = img.shape
@@ -58,20 +51,18 @@ def visualize_2d_image(
         ax.imshow(img, extent=extent, origin="upper")
     ax.set_xlabel("x [mm]")
     ax.set_ylabel("y [mm]")
-    if file is None:
-        file = "./debugging"
-
-    if f_name is None:
-        global ctr
-        plt.savefig(f"{file}/out_{ctr:03d}.png")
-        ctr += 1
-    else:
-        plt.savefig(f"{file}/{f_name}")
+    output_dir = Path(file or "debugging")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_name = f_name or "image.png"
+    plt.savefig(output_dir / output_name)
     plt.close()
 
 
 def visualize_vol(
-    volume: np.ndarray | torch.Tensor, spacing_mm: list[float] | np.ndarray = [1.0, 1.0, 1.0], title="volume"
+    volume: np.ndarray | torch.Tensor,
+    spacing_mm: list[float] | np.ndarray = (1.0, 1.0, 1.0),
+    title: str = "volume",
+    output_path: str | Path = "debugging/volume_midplanes.png",
 ) -> None:
     """Visualize the three middle planes of an ultrasound volume.
 
@@ -79,6 +70,7 @@ def visualize_vol(
         volume: Input volume with shape ``(height, width, depth)``.
         spacing_mm: Voxel spacing in millimetres. Must have length 3.
         title: Figure title.
+        output_path: PNG path for the visualization.
 
     Returns:
         None.
@@ -105,12 +97,9 @@ def visualize_vol(
     ax[1].set_title("axial (x-z). Source left")
     ax[2].imshow(volume[:, :, midplanes[2]], cmap="grey", aspect=spacing_mm[0] / spacing_mm[1])
     ax[2].set_title("sagittal (x-y). Source top")
-    if not REMOTE:
-        plt.show()
-    else:
-        global ctr
-        plt.savefig(f"./debugging/out_{ctr:03d}.png")
-        ctr += 1
+    saved_path = Path(output_path)
+    saved_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(saved_path)
     plt.close()
 
 
@@ -141,6 +130,7 @@ def visualize_stats(
     ax[2].set_title("SSIM")
     ax[2].set_yscale("log")
 
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f"{output_dir}/training_stats.png")
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path / "training_stats.png")
     plt.close()

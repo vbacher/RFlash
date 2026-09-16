@@ -438,7 +438,17 @@ def run_demo(args: argparse.Namespace) -> None:
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
-    print(f"\n Demo finished. Outputs written to {o_path}.")
+    output_mha = getattr(args, "output_mha", None)
+    if output_mha is not None:
+        output_mha = Path(output_mha)
+        if output_mha.suffix.lower() != ".mha":
+            raise ValueError("--output-mha must end in .mha.")
+        shadow_reduced, header = load_volume(str(o_path))
+        save_volume(shadow_reduced, output_mha, header=header)
+        print(f"\nDemo finished. Shadow-reduced .mha written to {output_mha}.")
+        return
+
+    print(f"\nDemo finished. Outputs written to {o_path}.")
 
 
 def _load_image_stack(input_path: str | Path | list[str | Path]) -> np.ndarray:

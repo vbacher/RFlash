@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import queue
 import shutil
 import tempfile
 import threading
-import traceback
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +73,8 @@ FORMAT_MHA = "mha"
 FORMAT_ZIP_PNG = "zip with PNG slices"
 FORMAT_ZIP_JPG = "zip with JPG slices"
 FORMAT_MP4 = "mp4 video"
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -172,6 +174,7 @@ def _load_rflash_theme() -> gr.Theme:
 def build_interface(default_output_dir: Path) -> gr.Blocks:
     """Create the Gradio Blocks interface."""
 
+    allow_server_paths = _server_paths_enabled()
     default_input = Path(__file__).resolve().parent / "data" / "fetal_brain" / "fetal-brain-demo.mha"
     # ``file_count="multiple"`` requires a list-shaped default in Gradio.
     default_input_value = [str(default_input)] if default_input.exists() else None
@@ -279,11 +282,13 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                     server_path = gr.Textbox(
                         label="Server-side input path",
                         placeholder="/path/to/volume.mha, /path/to/images, /path/to/stack.nii.gz, or /path/to/images.npy",
+                        visible=allow_server_paths,
                     )
                     output_dir = gr.Textbox(
                         label="Output directory",
                         value="" if default_output_dir == Path("outputs/gradio") else str(default_output_dir),
                         placeholder="Optional output directory (a new temporary folder is used when empty)",
+                        visible=allow_server_paths,
                     )
                     max_epochs = gr.Number(label="Max epochs", value=200, precision=0, minimum=1)
                     learning_rate = gr.Number(label="Learning rate", value=0.02, precision=6, minimum=1e-6)
@@ -456,10 +461,10 @@ def _accepted_data_message(input_kind: str, probe: str) -> str:
 
 
 def _format_gui_error(exc: Exception) -> str:
-    """Format an exception for the Status panel, including its traceback."""
+    """Log diagnostic details without exposing server information in the UI."""
 
-    message = str(exc) or exc.__class__.__name__
-    return f"RFlash failed: {message}\n\n{traceback.format_exc()}"
+    LOGGER.exception("RFlash interface request failed")
+    return "RFlash failed. Verify the selected input type and data format, then try again."
 
 
 def _reject_geometry_candidate_for_interface(
@@ -909,9 +914,10 @@ def _run_rflash_for_interface(
                 )
             event_queue.put(("done", result))
         except Exception as exc:
-            # The worker runs in another thread, so preserve its traceback before
-            # handing the failure back to the Gradio request thread.
-            event_queue.put(("error", f"{exc}\n\n{traceback.format_exc()}"))
+            # Keep diagnostics in server logs. Sending a traceback to the
+            # browser could disclose server paths or deployment details.
+            LOGGER.exception("RFlash training worker failed")
+            event_queue.put(("error", "RFlash training failed."))
 
     worker = threading.Thread(target=_worker, daemon=True)
     worker.start()
@@ -981,6 +987,8 @@ def _resolve_input(uploaded_files: list[str] | None, server_path: str | None) ->
 
     server_path = server_path or ""
     if server_path.strip():
+        if not _server_paths_enabled():
+            raise gr.Error("Server-side paths are disabled. Upload files through the interface instead.")
         path = Path(server_path.strip()).expanduser()
         if not path.exists():
             raise gr.Error(f"Input path does not exist: {path}")
@@ -988,7 +996,7 @@ def _resolve_input(uploaded_files: list[str] | None, server_path: str | None) ->
 
     files = _as_path_list(uploaded_files)
     if not files:
-        raise gr.Error("Please upload data or enter a server-side path.")
+        raise gr.Error("Please upload data.")
     missing_files = [path for path in files if not path.exists()]
     if missing_files:
         missing_text = ", ".join(str(path) for path in missing_files)
@@ -1002,6 +1010,8 @@ def _resolve_output_dir(output_dir: str | None) -> Path:
     """Resolve the requested output directory."""
 
     if (output_dir or "").strip():
+        if not _server_paths_enabled():
+            raise gr.Error("Custom output directories are disabled for this deployment.")
         return Path(output_dir.strip()).expanduser()
     return Path(tempfile.mkdtemp(prefix="rflash-gradio-"))
 
@@ -1015,7 +1025,9 @@ def _as_path_list(uploaded_files: list[Any] | None) -> list[Path]:
         uploaded_files = [uploaded_files]
     paths = []
     for file_value in uploaded_files:
-        file_path = getattr(file_value, "name", file_value)
+        # ``pathlib.Path.name`` is only a basename, whereas Gradio file
+        # objects expose their full temporary path through ``name``.
+        file_path = file_value if isinstance(file_value, Path) else getattr(file_value, "name", file_value)
         paths.append(Path(file_path))
     return paths
 
@@ -1337,6 +1349,16 @@ def _env_share_default() -> bool:
     """Read the default Gradio sharing setting from ``RFLASH_GRADIO_SHARE``."""
 
     return os.environ.get("RFLASH_GRADIO_SHARE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _server_paths_enabled() -> bool:
+    """Return whether trusted local users may access server-side paths.
+
+    This remains off by default so a public Gradio deployment cannot be used
+    to read arbitrary server files or write outside its temporary run folder.
+    """
+
+    return os.environ.get("RFLASH_ENABLE_SERVER_PATHS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def parse_args() -> argparse.Namespace:

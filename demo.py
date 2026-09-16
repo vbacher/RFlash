@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         "-i",
         "--input",
         type=Path,
-        default=Path("data/fetal_brain/test_3d.nii.gz"),
+        default=Path("data/fetal_brain/fetal-brain-demo.mha"),
         help="Input .mha file, image directory, .npy file, or .npy directory.",
     )
     parser.add_argument(
@@ -62,6 +62,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("outputs"),
         help="Directory for intermediate images, training plots, and saved volumes.",
+    )
+    parser.add_argument(
+        "--output-mha",
+        type=Path,
+        help="Optional exact .mha path for a copy of the shadow-reduced output.",
     )
     parser.add_argument(
         "-s",
