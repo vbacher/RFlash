@@ -17,6 +17,10 @@ License:
     licensing information.
 ------------------------------------------------------------------------------"""
 
+from __future__ import annotations
+
+from collections.abc import Callable
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -38,6 +42,7 @@ def train_model(
     data: Dataset_3D_volume | Dataset_2D_lin_array,
     training_params: Parameter_Demo3D | Parameter_Demo2D_curvylinear | Parameter_Demo2D_linear,
     device: torch.device,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> tuple[list[float], list[float], list[float]]:
     """Train the explicit representation against observed ultrasound slices.
 
@@ -48,6 +53,8 @@ def train_model(
         data: Dataset returning ``(index, label, mask)`` batches.
         training_params: Demo hyperparameters and data-loader settings.
         device: PyTorch device used for training.
+        progress_callback: Optional callback receiving batch- and epoch-level
+            progress events for the web interface.
 
     Returns:
         Three lists containing epoch-wise total loss, L2 loss, and SSIM values.
@@ -74,6 +81,9 @@ def train_model(
         threshold=1e-8,
     )
 
+    total_iterations = training_params.max_epochs * len(training_generator)
+    current_iteration = 0
+
     # start training
     losses = []
     l2s = []
@@ -91,6 +101,7 @@ def train_model(
         pose_model.train()
 
         for idx, label, mask in training_generator:
+            current_iteration += 1
             label = label.to(device=device)
             mask = mask.to(device=device)
 
@@ -116,6 +127,17 @@ def train_model(
             loss.backward()
             optimizer.step()
 
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "batch",
+                        "epoch": epoch + 1,
+                        "max_epochs": training_params.max_epochs,
+                        "iteration": current_iteration,
+                        "total_iterations": total_iterations,
+                    }
+                )
+
             del label, mask, aff_trans_mat, slice_coords, param_maps, render, loss, l2, ssim
 
         epoch_loss = float(np.mean(loss_epoch_train))
@@ -125,5 +147,22 @@ def train_model(
         losses.append(epoch_loss)
         l2s.append(epoch_l2)
         ssims.append(epoch_ssim)
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "epoch_end",
+                    "epoch": epoch + 1,
+                    "max_epochs": training_params.max_epochs,
+                    "iteration": current_iteration,
+                    "total_iterations": total_iterations,
+                    "losses": losses.copy(),
+                    "l2s": l2s.copy(),
+                    "ssims": ssims.copy(),
+                    "epoch_loss": epoch_loss,
+                    "epoch_l2": epoch_l2,
+                    "epoch_ssim": epoch_ssim,
+                }
+            )
 
     return losses, l2s, ssims

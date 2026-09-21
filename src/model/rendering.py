@@ -269,7 +269,7 @@ class Render_engine(torch.nn.Module):
 
         Args:
             fan: Fan-space tensor with shape ``(num_slices, height, width)``.
-            title: Output filename stem in the ``debugging`` directory.
+            title: Output filename.
 
         Returns:
             None.
@@ -291,5 +291,5 @@ class Render_engine(torch.nn.Module):
             volume_mask = binary_erosion(volume_mask, iterations=2)
             vol = to_8bit_graysacle(vol, volume_mask)
 
-        imsave(f"./debugging/{title}.png", vol[:, 80], cmap="gray")
+        imsave(f"{title}.png", vol[:, 80], cmap="gray")
         del vol, slice_coords, aff_mat_slice

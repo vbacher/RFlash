@@ -14,6 +14,13 @@ __pycache__/
 *.py[cod]
 .mypy_cache/
 .pytest_cache/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 
 # editor
 .vscode/
@@ -21,3 +28,9 @@ __pycache__/
 # outputs
 outputs/
 debugging/
+
+# gradio
+.gradio/
+
+# Maintainer-only deployment notes
+DEPLOYMENT.md

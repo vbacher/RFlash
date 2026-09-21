@@ -1,0 +1,78 @@
+:root {
+    --rflash-pink: #bf005f;
+    --rflash-ink: #111111;
+    --rflash-muted: #555555;
+    --rflash-border: #e0e0e0;
+}
+
+body,
+.gradio-container {
+    color: var(--rflash-ink) !important;
+    font-family: Arial, Helvetica, sans-serif !important;
+}
+
+.gradio-container {
+    max-width: 1180px !important;
+    margin: 0 auto !important;
+    padding: 0 28px 48px !important;
+}
+
+.site-header {
+    align-items: center !important;
+    border-bottom: 1px solid var(--rflash-border);
+    margin: 0 -28px 42px !important;
+    padding: 14px 28px 12px !important;
+}
+
+.site-header .header-omni{
+    border: 0 !important;
+    min-height: 48px !important;
+}
+.site-header .header-oxford {
+    border: 0 !important;
+    min-height: 48px !important;
+    margin-left: auto !important;
+    justify-content: flex-end !important;
+}
+
+.site-header .header-omni img{
+    max-height: 48px !important;
+    object-fit: contain !important;
+    object-position: left !important;
+}
+.site-header .header-oxford img {
+    max-height: 58px !important;
+    max-width: 125px !important;
+    object-fit: contain !important;
+    object-position: right !important;
+    margin-left: auto !important;
+}
+
+.site-header .header-omni img { max-width: 250px !important; }
+.site-header .header-oxford img { max-width: 125px !important; }
+
+/* -------------------------
+   Light / dark OMNI logos
+   ------------------------- */
+
+.header-omni-light {
+    display: flex !important;
+}
+
+.header-omni-dark {
+    display: none !important;
+}
+
+.dark .header-omni-light {
+    display: none !important;
+}
+
+.dark .header-omni-dark {
+    display: flex !important;
+}
+
+.hero {
+    margin: 0 auto 34px !important;
+    max-width: 900px;
+    text-align: center;
+}

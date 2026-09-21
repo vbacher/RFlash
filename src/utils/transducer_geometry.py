@@ -107,7 +107,7 @@ def visualize_geometry_overlay(
     image: np.ndarray,
     geometry: SliceTransducerGeometry,
     output_path: str | Path | None = None,
-    show: bool = True,
+    show: bool = False,
 ) -> Path | None:
     """Draw the estimated source, boundary lines, and fan sector over a slice.
 
@@ -115,7 +115,8 @@ def visualize_geometry_overlay(
         image: 2D ultrasound slice.
         geometry: Geometry estimate returned by :func:`estimate_geometry_slice`.
         output_path: Optional path for a saved PNG overlay.
-        show: Whether to open a matplotlib window.
+        show: Retained for backwards compatibility. Geometry previews are
+            always written to ``output_path`` and never open a GUI window.
 
     Returns:
         The saved output path when ``output_path`` is provided.
@@ -194,8 +195,6 @@ def visualize_geometry_overlay(
         saved_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(saved_path, dpi=160, bbox_inches="tight")
 
-    if show:
-        plt.show()
     plt.close(fig)
     return saved_path
 
@@ -227,7 +226,7 @@ def estimate_geometry_slice(
         plane: 2D ultrasound image with a normal curvilinear fan shape.
         spacing_plane_mm: Pixel spacing as ``(row_spacing, column_spacing)``.
         overlay_path: Optional path where the overlay should be saved.
-        verbose: Whether to show the overlay and ask for confirmation in an
+        verbose: Whether to write the overlay and ask for confirmation in an
             interactive terminal.
 
     Returns:
@@ -246,7 +245,19 @@ def estimate_geometry_slice(
     if spacing.shape != (2,):
         raise ValueError("spacing_plane_mm must contain row and column spacing.")
 
-    support = (plane_array > 0).astype(np.uint8) * 255  # binary mask of non-zero pixels
+    border_pixels = np.concatenate(
+        [
+            plane_array[0, :],
+            plane_array[-1, :],
+            plane_array[:, 0],
+            plane_array[:, -1],
+        ]
+    )
+    background_level = float(np.median(border_pixels))
+    if np.any(plane_array > background_level):
+        support = (plane_array > background_level).astype(np.uint8) * 255
+    else:
+        support = (plane_array > 0).astype(np.uint8) * 255
 
     # Canny edge detection
     plane_edges = Canny(support, 0, 3, None, 3)
@@ -307,7 +318,8 @@ def estimate_geometry_slice(
         except Exception:
             print("None")
 
-    assert lines_plane.__len__() == 2, f"edge finding failed. Instead of 2, {lines_plane.__len__()} were found."
+    if lines_plane is None or lines_plane.__len__() != 2:
+        raise ValueError("Edge finding failed for the current slice.")
     # find source by intersecting lines
     x_2_pix, x_1_pix = get_intersect(lines_plane.reshape(4, 2))
 
@@ -516,6 +528,7 @@ def estimate_scanner_geometries_stack(
     spacing_mm: Iterable[float] = (1.0, 1.0, 1.0),
     overlay_dir: str | Path | None = None,
     verbose: bool = False,
+    num_slices: int | None = None,
 ) -> tuple[list[SliceTransducerGeometry], list[int]]:
     """Estimate scanner geometry for each slice in a stack of 2D images.
 
@@ -524,6 +537,8 @@ def estimate_scanner_geometries_stack(
         spacing_mm: Pixel spacing as ``(row_spacing, column_spacing)``.
         overlay_dir: Optional directory where overlays should be saved.
         verbose: Whether to display overlays with matplotlib.
+        num_slices: Optional number of slices to process. When omitted, the
+            interactive command line prompt is preserved.
 
     Returns:
         Tuple containing the successful per-slice geometry estimates and the
@@ -542,7 +557,10 @@ def estimate_scanner_geometries_stack(
     if spacing.shape != (2,):
         raise ValueError("spacing_mm must contain two values.")
 
-    num_slices = _get_number_of_slices_to_process(stack_array.shape[0])
+    if num_slices is None:
+        num_slices = _get_number_of_slices_to_process(stack_array.shape[0])
+    if num_slices < 1 or num_slices > stack_array.shape[0]:
+        raise ValueError(f"num_slices must be between 1 and {stack_array.shape[0]}, got {num_slices}.")
 
     geometries = []
     random_selection = np.random.choice(stack_array.shape[0], size=stack_array.shape[0], replace=False)

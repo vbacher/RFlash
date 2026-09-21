@@ -106,6 +106,35 @@ def load_image_directory(directory_path: str | Path) -> np.ndarray:
     return np.stack(images, axis=0)
 
 
+def load_image_files(image_paths: list[str | Path]) -> np.ndarray:
+    """Load one or more 2D image files as a grayscale stack.
+
+    Args:
+        image_paths: Paths to image files uploaded through the web interface.
+
+    Returns:
+        A stack with shape ``(num_images, rows, columns)``.
+
+    Raises:
+        FileNotFoundError: If no paths are provided or one path is missing.
+        ValueError: If images do not all share the same shape.
+    """
+
+    if not image_paths:
+        raise FileNotFoundError("No image files were provided.")
+
+    paths = [Path(image_path) for image_path in image_paths]
+    missing = [str(path) for path in paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Image file does not exist: {missing[0]}")
+
+    images = [_read_grayscale_image(path) for path in sorted(paths)]
+    first_shape = images[0].shape
+    if any(image.shape != first_shape for image in images):
+        raise ValueError("All uploaded images must have the same shape.")
+    return np.stack(images, axis=0)
+
+
 def _ensure_image_stack(array: np.ndarray) -> np.ndarray:
     """Convert common ``.npy`` layouts to ``(num_images, rows, columns)``."""
 

@@ -1,0 +1,85 @@
+{
+  "name": "RFlash / Oxford OMNI",
+  "primary_hue": {
+    "50": "#fdf2f7",
+    "100": "#fbe5f0",
+    "200": "#f6bfd5",
+    "300": "#ee8db5",
+    "400": "#df4d8c",
+    "500": "#bf005f",
+    "600": "#a80054",
+    "700": "#880045",
+    "800": "#6f003a",
+    "900": "#5d0033",
+    "950": "#370019"
+  },
+  "secondary_hue": {
+    "50": "#f2f6fa",
+    "100": "#e4edf5",
+    "200": "#c5d8e9",
+    "300": "#9abbd8",
+    "400": "#6998c1",
+    "500": "#4170a4",
+    "600": "#355d8a",
+    "700": "#2d4c70",
+    "800": "#293f5d",
+    "900": "#26374f",
+    "950": "#182334"
+  },
+  "neutral_hue": {
+    "50": "#fafafa",
+    "100": "#f5f5f5",
+    "200": "#e0e0e0",
+    "300": "#cccccc",
+    "400": "#aaaaaa",
+    "500": "#777777",
+    "600": "#555555",
+    "700": "#444444",
+    "800": "#2b2b2b",
+    "900": "#111111",
+    "950": "#080808"
+  },
+  "spacing_size": "md",
+  "radius_size": "sm",
+  "text_size": "md",
+  "font": [
+    "Barlow",
+    "Arial",
+    "sans-serif"
+  ],
+  "font_mono": [
+    "Roboto Mono",
+    "monospace"
+  ],
+  "custom": {
+    "body_background_fill": "#ffffff",
+    "body_text_color": "#111111",
+    "body_text_color_subdued": "#555555",
+
+    "background_fill_primary": "#ffffff",
+    "background_fill_secondary": "#fafafa",
+
+    "block_background_fill": "#ffffff",
+    "block_border_color": "#e0e0e0",
+
+    "input_background_fill": "#ffffff",
+    "input_border_color": "#e0e0e0",
+    "input_border_color_focus": "#bf005f",
+
+    "button_primary_background_fill": "#bf005f",
+    "button_primary_background_fill_hover": "#002147",
+    "button_primary_text_color": "#ffffff",
+    "button_primary_border_color": "#bf005f",
+
+    "button_secondary_background_fill": "#ffffff",
+    "button_secondary_background_fill_hover": "#fafafa",
+    "button_secondary_text_color": "#111111",
+    "button_secondary_border_color": "#e0e0e0",
+
+    "link_text_color": "#bf005f",
+    "link_text_color_hover": "#002147",
+
+    "slider_color": "#bf005f",
+    "loader_color": "#bf005f"
+  }
+}

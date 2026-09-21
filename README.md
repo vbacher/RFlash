@@ -1,8 +1,19 @@
+---
+title: RFlash
+emoji: 🩻
+colorFrom: pink
+colorTo: blue
+sdk: gradio
+app_file: app.py
+pinned: false
+---
+
 # RFlash
 
-### [Project Page](https://vbacher.github.io/RFlash-ultrasound/) | [Paper]
+### [Project Page](https://vbacher.github.io/RFlash-ultrasound/) | [Demo] 
 
 RFlash is the official public demonstration repository for shadow reduction in ultrasound imaging using differentiable simulation and radiance field decomposition.
+For a GUI please use app.py, for a CLI interface use demo.py. The backend is the same.
 
 This repository is intentionally curated for release. It contains the code needed to load supported demo data, estimate scanner geometry, train the RFlash decomposition model, and save shadow-reduced image volumes.
 
@@ -16,8 +27,14 @@ source .venv/bin/activate
 pip install -r requirements.txt 
 python demo.py \
   --dataset fetal_brain \
-  --input data/fetal_brain/test_3d.nii.gz \
+  --input data/fetal_brain/fetal-brain-demo.mha \
   --output outputs/fetal_brain
+```
+
+To launch the web interface on your local machine, run:
+
+```bash
+python app.py
 ```
 
 ## Method Overview
@@ -40,11 +57,11 @@ RFlash/
 ├── README.md
 ├── LICENSE
 ├── requirements.txt
+├── app.py
 ├── demo.py
 ├── data/
 │   └── fetal_brain/
-│       ├── fetal-brain-demo.mha
-│       └── test_3d.nii.gz
+│       └── fetal-brain-demo.mha
 └── src/
     ├── _datatypes.py
     ├── datasets.py
@@ -74,7 +91,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The code has been developed for Python 3.11. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU.
+The code has been developed for Python 3.11 and also checked with Python 3.12. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU. For CUDA, install the PyTorch wheel matching the CUDA version on your machine before installing the remaining requirements; the generic `torch` requirement is intentionally suitable for CPU installs.
+
+The Gradio app listens on `0.0.0.0` by default so it can be reached through SSH port forwarding or a local network.
 
 ## Dependencies
 
@@ -88,6 +107,7 @@ The public demo uses:
 - SciPy for diagnostic morphology utilities.
 - Matplotlib for image loading, overlays, and training plots.
 - tqdm for training progress bars.
+- Gradio for the optional browser-based interface.
 
 No tracking software, experiment database, or private infrastructure is required.
 
@@ -101,23 +121,13 @@ A small fetal brain 3D ultrasound example is included under:
 data/fetal_brain/
 ```
 
-The command line default currently points to:
-
-```text
-data/fetal_brain/test_3d.nii.gz
-```
-
 ### Abdominal Ultrasound
 
 Download the US simulation and segmentation dataset from Kaggle:
 
 [US simulation & segmentation](https://www.kaggle.com/datasets/ignaciorlando/ussimandsegm)
 
-Use the real ultrasound image directory as input. In the development setup this was:
-
-```text
-/home/scratch/valher/data/RFlash-demo/archive/abdominal_US/abdominal_US/RUS/images
-```
+Use the real ultrasound image (RUS) directory as input.
 
 The current loader reads `.jpg` files from the provided directory.
 
@@ -134,14 +144,98 @@ images-l2.npy
 images-r2.npy
 ```
 
-## Running The Demo
+## Running The Gradio Interface
+
+Start the web application with:
+
+```bash
+python app.py
+```
+
+For information on parameters, run:
+
+```bash
+python app.py --help
+```
+
+By default the app listens on `0.0.0.0:7860` and writes outputs to:
+
+```text
+outputs/gradio/
+```
+
+On a remote Linux machine, forward the port from your local computer:
+
+```bash
+ssh -L 7860:localhost:7860 user@remote-host
+```
+
+Then open:
+
+```text
+http://localhost:7860
+```
+
+The app accepts uploaded data:
+
+- Upload one or more files through the browser.
+
+For trusted local deployments only, set `RFLASH_ENABLE_SERVER_PATHS=1` before
+starting the app to reveal server-side input and output path fields. These
+fields are intentionally disabled by default to prevent a public web app from
+accessing arbitrary server files.
+
+The packaged `data/fetal_brain/fetal-brain-demo.mha` volume is preloaded by default,
+so the demo can be started immediately by pressing **Run RFlash**.
+
+The interface asks whether the data is a 3D volume or 2D image data. For 2D data it asks whether the probe is linear or curvilinear. Curvilinear inputs require scanner geometry estimation; the app displays geometry overlays and lets the user accept or reject candidate slices before training.
+
+Accepted inputs in the web interface:
+
+- 3D volume: one `.mha`, `.nii`, or `.nii.gz` file.
+- 2D stack, linear probe: one or more image files, a stack saved as `.mha`, `.nii`, or `.nii.gz`, or synthetic-liver style `.npy` input.
+- 2D stack, curvilinear probe: one or more image files, or a stack saved as `.mha`, `.nii`, or `.nii.gz`.
+
+The app also allows the user to keep the default training parameters or override the main settings manually before running RFlash. During training, the Gradio progress bar reports training epochs, and the loss, L2, and SSIM curves update live in the interface.
+
+Sharing is configurable and is disabled by default. To enable a Gradio share link:
+
+```bash
+python app.py --share
+```
+
+or:
+
+```bash
+RFLASH_GRADIO_SHARE=1 python app.py
+```
+
+Use `--no-share` to override the environment variable. Use `--server-port`, `--server-name`, and `--output` to configure deployment details:
+
+```bash
+python app.py --server-name 0.0.0.0 --server-port 7860 --output outputs/gradio
+```
+
+The Gradio path prefers CUDA when available. If CUDA is not available it falls back to MPS when available, then CPU.
+
+Processed output formats:
+
+- Volumes can be exported as `.nii.gz` or `.mha`.
+- 2D outputs can be exported as `.nii.gz`, `.mha`, an `.mp4` video, or a zip archive of `.png` or `.jpg` slices.
+  
+### Using the graphical user interface on a local machine
+
+If you use the app on a trusted local machine with a GPU, tick `advanced settings` to adjust training parameters. To use absolute server paths, start the app with `RFLASH_ENABLE_SERVER_PATHS=1`.
+
+
+## Running The CLI Demo
 
 Run the packaged fetal brain example:
 
 ```bash
 python demo.py \
   --dataset fetal_brain \
-  --input data/fetal_brain/test_3d.nii.gz \
+  --input data/fetal_brain/fetal-brain-demo.mha \
   --output outputs/fetal_brain
 ```
 
@@ -166,10 +260,50 @@ python demo.py \
 Use `--silent` to suppress non-essential plots and intermediate training-statistic visualization:
 
 ```bash
-python demo.py --dataset fetal_brain --input data/fetal_brain/test_3d.nii.gz --output outputs/fetal_brain --silent
+python demo.py --dataset fetal_brain --input data/fetal_brain/fetal-brain-demo.mha --output outputs/fetal_brain --silent
+```
+
+To also write the shadow-reduced result to an exact `.mha` destination, add
+`--output-mha`:
+
+```bash
+python demo.py --dataset fetal_brain \
+  --input data/fetal_brain/fetal-brain-demo.mha \
+  --output outputs/fetal_brain \
+  --output-mha /path/to/shadow_reduced.mha \
+  --silent
 ```
 
 For abdominal stacks, the script asks how many slices to process because scanner-geometry estimation can require manual inspection when the fan edges are unclear.
+
+The command line interface and the Gradio application both call the shared inference routines in `src/inference.py`. This keeps a single implementation of the RFlash training and rendering pipeline.
+
+## Local Testing
+
+After installing dependencies, verify the entry points:
+
+```bash
+python demo.py --help
+python app.py --help
+```
+
+Run a small CLI smoke test with the packaged fetal brain example:
+
+```bash
+python demo.py \
+  --dataset fetal_brain \
+  --input data/fetal_brain/fetal-brain-demo.mha \
+  --output outputs/local_test \
+  --silent
+```
+
+For the web interface, launch:
+
+```bash
+python app.py --server-port 7860
+```
+
+Open `http://localhost:7860`, select the packaged fetal brain volume, estimate and confirm geometry, then run RFlash. On a remote machine, use SSH port forwarding as shown above.
 
 ## Scanner Geometry Estimation
 
@@ -199,10 +333,6 @@ outputs/<dataset>/
 
 `training_stats.png` is written only when `--silent` is not used. The saved volumes contain 8-bit grayscale versions of the original and shadow-reduced data.
 
-## Model Weights
-
-No pretrained model weights are required. The demo trains the explicit representation from the input data using the parameters in `src/trainings_params.py`.
-
 ## Citation
 
 If you use this code, please cite:
@@ -215,14 +345,18 @@ If you use this code, please cite:
 }
 ```
 
-Update this entry with the final publication details once available.
-
 ## License
 
 This repository is distributed under the terms described in [LICENSE](LICENSE).
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the repository's disclosure process and
+deployment guidance.
+
 ## Contact
 
 Valentin Bacher
-valentin.bacher@cs.ox.ac.uk
-OMNI Lab, Department of Computer Science, University of Oxford
+(valentin.bacher@cs.ox.ac.uk)
+
+[OMNI Lab](https://omni.cs.ox.ac.uk/), Department of Computer Science, University of Oxford
