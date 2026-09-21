@@ -28,6 +28,7 @@ import shutil
 import tempfile
 import threading
 import zipfile
+import spaces
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -226,6 +227,9 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
             "datasets. "
             "For more information on the data please refer to the "
             "[GitHub Repo](https://github.com/vbacher/RFlash/blob/main/README.md)."
+        )
+        gr.Markdown(
+            "**Please be careful with your data. To process patient data, please deploy on your own workstation. If you have questions reach out.**"
         )
 
         geometry_state = gr.State(None)
@@ -826,6 +830,7 @@ def _accept_geometry_and_maybe_run(
         )
 
 
+@spaces.GPU(duration=60)
 def _run_rflash_for_interface(
     uploaded_files: list[str] | None,
     server_path: str | None,

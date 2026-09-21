@@ -10,3 +10,4 @@ torchmetrics>=1.2,<2
 tqdm>=4.65,<5
 pillow>=10,<12
 gradio>=4,<7
+spaces
