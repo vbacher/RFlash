@@ -202,7 +202,7 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
     # This is deployment configuration, not a browser-provided value.  In a
     # public deployment it is deliberately captured by the callback closures
     # below and never represented by a Gradio component.
-    trusted_output_dir = Path(default_output_dir)
+    trusted_output_dir = _trusted_output_root(default_output_dir)
     default_input = Path(__file__).resolve().parent / "data" / "fetal_brain" / "fetal-brain-demo.mha"
     # ``file_count="multiple"`` requires a list-shaped default in Gradio.
     default_input_value = [str(default_input)] if default_input.exists() else None
@@ -1145,6 +1145,18 @@ def _resolve_output_dir(
     return Path(tempfile.mkdtemp(prefix="rflash-gradio-"))
 
 
+def _trusted_output_root(default_output_dir: str | Path) -> Path:
+    """Canonicalize the deployment-configured output root on the server."""
+
+    return Path(default_output_dir).expanduser().resolve(strict=False)
+
+
+def _trusted_output_allowed_paths(default_output_dir: str | Path) -> list[str]:
+    """Return the sole non-temporary Gradio file-serving root for this app."""
+
+    return [str(_trusted_output_root(default_output_dir))]
+
+
 def _cleanup_stale_run_directories() -> None:
     """Remove old app-created temporary runs without touching other files."""
 
@@ -1521,7 +1533,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Launch the Gradio web interface."""
     args = parse_args()
-    app = build_interface(default_output_dir=args.output)
+    trusted_output_dir = _trusted_output_root(args.output)
+    app = build_interface(default_output_dir=trusted_output_dir)
     style_path = Path(__file__).resolve().with_name("app_style.css")
     app.launch(
         server_name=args.server_name,
@@ -1529,6 +1542,7 @@ def main() -> None:
         share=args.share,
         theme=_load_rflash_theme(),
         css_paths=str(style_path) if style_path.exists() else None,
+        allowed_paths=_trusted_output_allowed_paths(trusted_output_dir),
     )
 
 
