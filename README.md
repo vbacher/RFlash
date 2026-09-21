@@ -1,6 +1,5 @@
 ---
 title: RFlash
-emoji: 🩻
 colorFrom: pink
 colorTo: blue
 sdk: gradio
@@ -91,7 +90,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The code has been developed for Python 3.11 and also checked with Python 3.12. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU. For CUDA, install the PyTorch wheel matching the CUDA version on your machine before installing the remaining requirements; the generic `torch` requirement is intentionally suitable for CPU installs.
+The recommended runtime is Python 3.12.12, including for Hugging Face ZeroGPU. The code was also checked locally with Python 3.12.2. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU. For local CUDA development, install the PyTorch wheel matching the CUDA version on your machine before installing the remaining requirements.
 
 The Gradio app listens on `0.0.0.0` by default so it can be reached through SSH port forwarding or a local network.
 
@@ -110,6 +109,10 @@ The public demo uses:
 - Gradio for the optional browser-based interface.
 
 No tracking software, experiment database, or private infrastructure is required.
+
+The dependency ranges in `requirements.txt` are compatible with the Hugging
+Face ZeroGPU runtime: Gradio 4 or newer, PyTorch newer than 2.8, and Python
+3.12.12.
 
 ## Data
 

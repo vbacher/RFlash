@@ -1,12 +1,12 @@
-# Tested with Python 3.11/3.12. Install a CUDA-enabled torch build separately
-# when GPU inference is required (see README.md).
+# Hugging Face ZeroGPU runtime: Python 3.12.12 and PyTorch >2.8.
+# Install a CUDA-enabled torch build separately for local GPU development.
+opencv-python>=4.8,<5
+torch>2.8,<3
 numpy>=1.24,<3
 matplotlib>=3.7,<4
 medpy>=0.5,<1
-opencv-python>=4.8,<5
 scipy>=1.10,<2
-torch>=2.1,<3
 torchmetrics>=1.2,<2
 tqdm>=4.65,<5
 pillow>=10,<12
-gradio>=5,<7
+gradio>=4,<7
