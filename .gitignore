@@ -34,3 +34,6 @@ debugging/
 
 # Maintainer-only deployment notes
 DEPLOYMENT.md
+
+# Local tests
+tests/

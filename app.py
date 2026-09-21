@@ -199,6 +199,10 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
 
     _cleanup_stale_run_directories()
     allow_server_paths = _server_paths_enabled()
+    # This is deployment configuration, not a browser-provided value.  In a
+    # public deployment it is deliberately captured by the callback closures
+    # below and never represented by a Gradio component.
+    trusted_output_dir = Path(default_output_dir)
     default_input = Path(__file__).resolve().parent / "data" / "fetal_brain" / "fetal-brain-demo.mha"
     # ``file_count="multiple"`` requires a list-shaped default in Gradio.
     default_input_value = [str(default_input)] if default_input.exists() else None
@@ -316,12 +320,12 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                         placeholder="/path/to/volume.mha, /path/to/images, /path/to/stack.nii.gz, or /path/to/images.npy",
                         visible=allow_server_paths,
                     )
-                    output_dir = gr.Textbox(
-                        label="Output directory",
-                        value="" if default_output_dir == Path("outputs/gradio") else str(default_output_dir),
-                        placeholder="Optional output directory (a new temporary folder is used when empty)",
-                        visible=allow_server_paths,
-                    )
+                    if allow_server_paths:
+                        output_dir = gr.Textbox(
+                            label="Output directory",
+                            value="" if default_output_dir == Path("outputs/gradio") else str(default_output_dir),
+                            placeholder="Optional output directory (a new temporary folder is used when empty)",
+                        )
                     max_epochs = gr.Number(label="Max epochs", value=200, precision=0, minimum=1)
                     learning_rate = gr.Number(label="Learning rate", value=0.02, precision=6, minimum=1e-6)
                     lambda_train = gr.Number(label="L2 weight", value=0.95, precision=4, minimum=0.0, maximum=1.0)
@@ -362,24 +366,64 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
             inputs=[advanced],
             outputs=[advanced_settings],
         )
+        local_accept_inputs = [
+            uploaded_files, server_path, input_kind, probe, output_format, output_dir,
+            geometry_state, advanced, max_epochs, learning_rate, lambda_train,
+            compression, batch_size, lr_patience,
+        ] if allow_server_paths else [
+            uploaded_files, server_path, input_kind, probe, output_format,
+            geometry_state, advanced, max_epochs, learning_rate, lambda_train,
+            compression, batch_size, lr_patience,
+        ]
+        local_run_inputs = [
+            uploaded_files, server_path, input_kind, probe, geometry_mode, num_slices,
+            output_format, output_dir, geometry_state, advanced, max_epochs,
+            learning_rate, lambda_train, compression, batch_size, lr_patience,
+        ] if allow_server_paths else [
+            uploaded_files, server_path, input_kind, probe, geometry_mode, num_slices,
+            output_format, geometry_state, advanced, max_epochs, learning_rate,
+            lambda_train, compression, batch_size, lr_patience,
+        ]
+
+        if allow_server_paths:
+            accept_callback = _accept_geometry_and_maybe_run
+            run_callback = _run_or_prepare_geometry
+            reject_callback = _reject_geometry_candidate_for_interface
+        else:
+            def accept_callback(
+                uploaded_files, server_path, input_kind, probe, output_format, geometry_state,
+                advanced, max_epochs, learning_rate, lambda_train, compression, batch_size,
+                lr_patience, progress=gr.Progress(track_tqdm=False),
+            ):
+                yield from _accept_geometry_and_maybe_run(
+                    uploaded_files, server_path, input_kind, probe, output_format, None,
+                    geometry_state, advanced, max_epochs, learning_rate, lambda_train,
+                    compression, batch_size, lr_patience, progress,
+                    trusted_output_dir=trusted_output_dir,
+                )
+
+            def run_callback(
+                uploaded_files, server_path, input_kind, probe, geometry_mode, num_slices,
+                output_format, geometry_state, advanced, max_epochs, learning_rate,
+                lambda_train, compression, batch_size, lr_patience,
+                progress=gr.Progress(track_tqdm=False),
+            ):
+                yield from _run_or_prepare_geometry(
+                    uploaded_files, server_path, input_kind, probe, geometry_mode, num_slices,
+                    output_format, None, geometry_state, advanced, max_epochs, learning_rate,
+                    lambda_train, compression, batch_size, lr_patience, progress,
+                    trusted_output_dir=trusted_output_dir,
+                )
+
+            def reject_callback(geometry_state):
+                return _reject_geometry_candidate_for_interface(
+                    geometry_state,
+                    trusted_output_dir=trusted_output_dir,
+                )
+
         accept_geometry_button.click(
-            _accept_geometry_and_maybe_run,
-            inputs=[
-                uploaded_files,
-                server_path,
-                input_kind,
-                probe,
-                output_format,
-                output_dir,
-                geometry_state,
-                advanced,
-                max_epochs,
-                learning_rate,
-                lambda_train,
-                compression,
-                batch_size,
-                lr_patience,
-            ],
+            accept_callback,
+            inputs=local_accept_inputs,
             outputs=[
                 output_gallery,
                 download_output,
@@ -392,7 +436,7 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
             ],
         )
         reject_geometry_button.click(
-            _reject_geometry_candidate_for_interface,
+            reject_callback,
             inputs=[geometry_state],
             outputs=[
                 geometry_state,
@@ -403,25 +447,8 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
             ],
         )
         run_button.click(
-            _run_or_prepare_geometry,
-            inputs=[
-                uploaded_files,
-                server_path,
-                input_kind,
-                probe,
-                geometry_mode,
-                num_slices,
-                output_format,
-                output_dir,
-                geometry_state,
-                advanced,
-                max_epochs,
-                learning_rate,
-                lambda_train,
-                compression,
-                batch_size,
-                lr_patience,
-            ],
+            run_callback,
+            inputs=local_run_inputs,
             outputs=[
                 output_gallery,
                 download_output,
@@ -501,11 +528,12 @@ def _format_gui_error(exc: Exception) -> str:
 
 def _reject_geometry_candidate_for_interface(
     geometry_state: GeometryWorkflowState | None,
+    trusted_output_dir: Path | None = None,
 ) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
     """Run geometry rejection and expose failures in the Status panel."""
 
     try:
-        return _reject_geometry_candidate(geometry_state)
+        return _reject_geometry_candidate(geometry_state, trusted_output_dir=trusted_output_dir)
     except Exception as exc:
         return (
             geometry_state,
@@ -524,11 +552,12 @@ def _prepare_geometry_workflow(
     geometry_mode: str,
     num_slices: float,
     output_dir: str | None,
+    trusted_output_dir: Path | None = None,
 ) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
     """Estimate scanner geometry and present the current candidate for review."""
 
     resolved_input = _resolve_input(uploaded_files, server_path, input_kind=input_kind, probe=probe)
-    output_root = _resolve_output_dir(output_dir)
+    output_root = _resolve_output_dir(output_dir, trusted_output_dir=trusted_output_dir)
     overlay_dir = output_root / "intermediate_images"
     overlay_dir.mkdir(parents=True, exist_ok=True)
 
@@ -622,6 +651,7 @@ def _accept_geometry_candidate(
 
 def _reject_geometry_candidate(
     geometry_state: GeometryWorkflowState | None,
+    trusted_output_dir: Path | None = None,
 ) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
     """Reject the current geometry estimate and move to the next candidate."""
 
@@ -631,11 +661,7 @@ def _reject_geometry_candidate(
     if geometry_state.input_kind == INPUT_VOLUME:
         if geometry_state.volume_data is None or geometry_state.volume_spacing_mm is None:
             raise gr.Error("The volume geometry review became stale. Press Run RFlash to restart it.")
-        overlay_dir = (
-            Path(geometry_state.overlay_paths[0]).parent
-            if geometry_state.overlay_paths
-            else Path("outputs/gradio/intermediate_images")
-        )
+        overlay_dir = _geometry_overlay_dir(geometry_state, trusted_output_dir)
         geometry = estimate_scanner_geometry_volume(
             geometry_state.volume_data,
             geometry_state.volume_spacing_mm,
@@ -647,13 +673,24 @@ def _reject_geometry_candidate(
         return _geometry_workflow_response(geometry_state)
 
     stack = _reload_stack_from_state(geometry_state)
-    overlay_dir = (
-        Path(geometry_state.current_overlay).parent
-        if geometry_state.current_overlay is not None
-        else Path("outputs/gradio/intermediate_images")
-    )
+    overlay_dir = _geometry_overlay_dir(geometry_state, trusted_output_dir)
     state = _prepare_next_candidate(geometry_state, stack, overlay_dir)
     return _geometry_workflow_response(state)
+
+
+def _geometry_overlay_dir(
+    geometry_state: GeometryWorkflowState,
+    trusted_output_dir: Path | None = None,
+) -> Path:
+    """Return the geometry overlay directory without trusting public state."""
+
+    if not _server_paths_enabled() and trusted_output_dir is not None:
+        return Path(trusted_output_dir) / "intermediate_images"
+    if geometry_state.input_kind == INPUT_VOLUME and geometry_state.overlay_paths:
+        return Path(geometry_state.overlay_paths[0]).parent
+    if geometry_state.current_overlay is not None:
+        return Path(geometry_state.current_overlay).parent
+    return Path("outputs/gradio/intermediate_images")
 
 
 def _prepare_next_candidate(
@@ -765,6 +802,7 @@ def _run_or_prepare_geometry(
     batch_size: float,
     lr_patience: float,
     progress: gr.Progress = gr.Progress(track_tqdm=False),
+    trusted_output_dir: Path | None = None,
 ):
     """Start geometry review when needed, otherwise start shadow removal."""
 
@@ -779,6 +817,7 @@ def _run_or_prepare_geometry(
                 geometry_mode,
                 num_slices,
                 output_dir,
+                trusted_output_dir,
             )
             yield [], None, status, None, state, gallery, accept, reject
             return
@@ -799,6 +838,7 @@ def _run_or_prepare_geometry(
             batch_size,
             lr_patience,
             progress,
+            trusted_output_dir=trusted_output_dir,
         ):
             yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
     except Exception as exc:
@@ -824,6 +864,7 @@ def _accept_geometry_and_maybe_run(
     batch_size: float,
     lr_patience: float,
     progress: gr.Progress = gr.Progress(track_tqdm=False),
+    trusted_output_dir: Path | None = None,
 ):
     """Accept geometry and immediately run RFlash once review is complete."""
 
@@ -849,6 +890,7 @@ def _accept_geometry_and_maybe_run(
             batch_size,
             lr_patience,
             progress,
+            trusted_output_dir=trusted_output_dir,
         ):
             yield (*result, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
     except Exception as exc:
@@ -875,15 +917,19 @@ def _run_rflash_for_interface(
     batch_size: float,
     lr_patience: float,
     progress: gr.Progress = gr.Progress(track_tqdm=False),
+    trusted_output_dir: Path | None = None,
 ):
     """Run RFlash and stream progress updates back into the interface."""
 
     resolved_input = _resolve_input(uploaded_files, server_path, input_kind=input_kind, probe=probe)
-    output_root = (
-        geometry_state.output_dir
-        if geometry_state is not None and geometry_state.output_dir is not None
-        else _resolve_output_dir(output_dir)
-    )
+    if not _server_paths_enabled():
+        # Geometry state crosses the interactive callback boundary, so do not
+        # use its stored path for a public deployment either.
+        output_root = _resolve_output_dir(None, trusted_output_dir=trusted_output_dir)
+    elif geometry_state is not None and geometry_state.output_dir is not None:
+        output_root = geometry_state.output_dir
+    else:
+        output_root = _resolve_output_dir(output_dir, trusted_output_dir=trusted_output_dir)
     device = select_device(prefer_cuda=True)
     overrides = (
         None
@@ -1076,13 +1122,26 @@ def _validate_uploaded_files(
         raise gr.Error(f"The total upload size must not exceed {limit_mb} MB.")
 
 
-def _resolve_output_dir(output_dir: str | None) -> Path:
-    """Resolve the requested output directory."""
+def _resolve_output_dir(
+    client_output_dir: str | None,
+    trusted_output_dir: Path | None = None,
+) -> Path:
+    """Resolve a local client choice or a deployment-configured output path.
 
-    if (output_dir or "").strip():
-        if not _server_paths_enabled():
-            raise gr.Error("Custom output directories are disabled for this deployment.")
-        return Path(output_dir.strip()).expanduser()
+    ``client_output_dir`` is untrusted because it originates from a Gradio
+    request.  Public deployments therefore ignore it completely and use only
+    the server-configured ``trusted_output_dir``.
+    """
+
+    if not _server_paths_enabled():
+        if trusted_output_dir is not None:
+            return Path(trusted_output_dir)
+        # This fallback retains the safe temporary-directory behaviour for
+        # programmatic callers that do not configure a deployment output.
+        return Path(tempfile.mkdtemp(prefix="rflash-gradio-"))
+
+    if (client_output_dir or "").strip():
+        return Path(client_output_dir.strip()).expanduser()
     return Path(tempfile.mkdtemp(prefix="rflash-gradio-"))
 
 
