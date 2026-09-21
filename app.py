@@ -20,12 +20,14 @@ License:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import logging
 import os
 import queue
 import shutil
 import tempfile
+import time
 import threading
 import zipfile
 import spaces
@@ -76,6 +78,26 @@ FORMAT_ZIP_JPG = "zip with JPG slices"
 FORMAT_MP4 = "mp4 video"
 
 LOGGER = logging.getLogger(__name__)
+
+# These limits apply to browser uploads only. They keep the public demo from
+# being used as an unbounded file store or from allocating unexpectedly large
+# arrays before RFlash has a chance to validate the input.
+MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+MAX_UPLOAD_FILES = 256
+TEMP_RUN_PREFIX = "rflash-gradio-"
+TEMP_RUN_MAX_AGE_SECONDS = 24 * 60 * 60
+SUPPORTED_UPLOAD_SUFFIXES = {
+    ".mha",
+    ".nii",
+    ".nii.gz",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".npy",
+}
 
 
 @dataclass
@@ -175,6 +197,7 @@ def _load_rflash_theme() -> gr.Theme:
 def build_interface(default_output_dir: Path) -> gr.Blocks:
     """Create the Gradio Blocks interface."""
 
+    _cleanup_stale_run_directories()
     allow_server_paths = _server_paths_enabled()
     default_input = Path(__file__).resolve().parent / "data" / "fetal_brain" / "fetal-brain-demo.mha"
     # ``file_count="multiple"`` requires a list-shaped default in Gradio.
@@ -229,7 +252,10 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
             "[GitHub Repo](https://github.com/vbacher/RFlash/blob/main/README.md)."
         )
         gr.Markdown(
-            "**Please be careful with your data. To process patient data, please deploy on your own workstation. If you have questions reach out.**"
+            "## Research demonstration\n\n"
+            "**Do not upload patient-identifiable, confidential, or other sensitive data.** "
+            "Use only data that you are authorized to share for this demonstration. "
+            "This service is not intended for clinical use."
         )
 
         geometry_state = gr.State(None)
@@ -241,7 +267,9 @@ def build_interface(default_output_dir: Path) -> gr.Blocks:
                     file_count="multiple",
                     value=default_input_value,
                     type="filepath",
-                    file_types=[".mha", ".nii", ".gz", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".npy"],
+                    file_types=[
+                        ".mha", ".nii", ".nii.gz", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".npy"
+                    ],
                     height=180,
                 )
 
@@ -499,7 +527,7 @@ def _prepare_geometry_workflow(
 ) -> tuple[GeometryWorkflowState | None, Any, str, gr.Button, gr.Button]:
     """Estimate scanner geometry and present the current candidate for review."""
 
-    resolved_input = _resolve_input(uploaded_files, server_path)
+    resolved_input = _resolve_input(uploaded_files, server_path, input_kind=input_kind, probe=probe)
     output_root = _resolve_output_dir(output_dir)
     overlay_dir = output_root / "intermediate_images"
     overlay_dir.mkdir(parents=True, exist_ok=True)
@@ -850,7 +878,7 @@ def _run_rflash_for_interface(
 ):
     """Run RFlash and stream progress updates back into the interface."""
 
-    resolved_input = _resolve_input(uploaded_files, server_path)
+    resolved_input = _resolve_input(uploaded_files, server_path, input_kind=input_kind, probe=probe)
     output_root = (
         geometry_state.output_dir
         if geometry_state is not None and geometry_state.output_dir is not None
@@ -960,7 +988,7 @@ def _run_rflash_for_interface(
             download_path = _export_processed_output(result, output_format)
             preferred_slice = 88 if _is_fetal_brain_demo_input(resolved_input) else None
             preview_paths = _write_output_previews(result, preferred_volume_slice=preferred_slice)
-            status = f"RFlash finished on {device}. Processed output written to {download_path}."
+            status = "RFlash finished. The processed output is ready to download."
             yield preview_paths, str(download_path), status, curve_path
             return
 
@@ -987,8 +1015,13 @@ def _collect_training_overrides(
     }
 
 
-def _resolve_input(uploaded_files: list[str] | None, server_path: str | None) -> str | Path | list[str | Path]:
-    """Resolve uploaded files or a server-side path to an inference input."""
+def _resolve_input(
+    uploaded_files: list[str] | None,
+    server_path: str | None,
+    input_kind: str | None = None,
+    probe: str | None = None,
+) -> str | Path | list[str | Path]:
+    """Resolve and validate an uploaded input or trusted local path."""
 
     server_path = server_path or ""
     if server_path.strip():
@@ -996,19 +1029,51 @@ def _resolve_input(uploaded_files: list[str] | None, server_path: str | None) ->
             raise gr.Error("Server-side paths are disabled. Upload files through the interface instead.")
         path = Path(server_path.strip()).expanduser()
         if not path.exists():
-            raise gr.Error(f"Input path does not exist: {path}")
+            raise gr.Error("The selected input could not be found.")
         return path
 
     files = _as_path_list(uploaded_files)
     if not files:
         raise gr.Error("Please upload data.")
-    missing_files = [path for path in files if not path.exists()]
-    if missing_files:
-        missing_text = ", ".join(str(path) for path in missing_files)
-        raise gr.Error(f"Uploaded input path does not exist: {missing_text}")
+    _validate_uploaded_files(files, input_kind=input_kind, probe=probe)
     if len(files) == 1:
         return files[0]
     return files
+
+
+def _validate_uploaded_files(
+    files: list[Path],
+    input_kind: str | None = None,
+    probe: str | None = None,
+) -> None:
+    """Validate browser-uploaded files before any image or volume loader runs."""
+
+    if len(files) > MAX_UPLOAD_FILES:
+        raise gr.Error(f"Please upload no more than {MAX_UPLOAD_FILES} files.")
+
+    allowed_suffixes = SUPPORTED_UPLOAD_SUFFIXES
+    if input_kind == INPUT_VOLUME:
+        allowed_suffixes = {".mha", ".nii", ".nii.gz"}
+    elif input_kind == INPUT_STACK and probe == PROBE_CURVILINEAR:
+        allowed_suffixes = SUPPORTED_UPLOAD_SUFFIXES - {".npy"}
+
+    total_bytes = 0
+    for path in files:
+        name = path.name.lower()
+        suffix = ".nii.gz" if name.endswith(".nii.gz") else path.suffix.lower()
+        if suffix not in allowed_suffixes:
+            raise gr.Error("One or more uploaded files use an unsupported format.")
+        if path.is_symlink() or not path.is_file():
+            raise gr.Error("Uploaded inputs must be regular files.")
+        try:
+            total_bytes += path.stat().st_size
+        except OSError as exc:
+            LOGGER.warning("Could not inspect uploaded file metadata: %s", exc)
+            raise gr.Error("One or more uploaded files could not be inspected.") from exc
+
+    if total_bytes > MAX_UPLOAD_BYTES:
+        limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+        raise gr.Error(f"The total upload size must not exceed {limit_mb} MB.")
 
 
 def _resolve_output_dir(output_dir: str | None) -> Path:
@@ -1019,6 +1084,22 @@ def _resolve_output_dir(output_dir: str | None) -> Path:
             raise gr.Error("Custom output directories are disabled for this deployment.")
         return Path(output_dir.strip()).expanduser()
     return Path(tempfile.mkdtemp(prefix="rflash-gradio-"))
+
+
+def _cleanup_stale_run_directories() -> None:
+    """Remove old app-created temporary runs without touching other files."""
+
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    cutoff = time.time() - TEMP_RUN_MAX_AGE_SECONDS
+    for candidate in temp_root.glob(f"{TEMP_RUN_PREFIX}*"):
+        try:
+            if candidate.is_dir() and candidate.stat().st_mtime < cutoff:
+                shutil.rmtree(candidate)
+        except OSError:
+            LOGGER.warning("Could not remove stale temporary run directory")
+
+
+atexit.register(_cleanup_stale_run_directories)
 
 
 def _as_path_list(uploaded_files: list[Any] | None) -> list[Path]:

@@ -107,6 +107,7 @@ The public demo uses:
 - Matplotlib for image loading, overlays, and training plots.
 - tqdm for training progress bars.
 - Gradio for the optional browser-based interface.
+- Hugging Face Spaces for optional ZeroGPU execution.
 
 No tracking software, experiment database, or private infrastructure is required.
 
@@ -182,6 +183,8 @@ http://localhost:7860
 The app accepts uploaded data:
 
 - Upload one or more files through the browser.
+- Browser uploads are limited to the supported formats listed above and a
+  total size of 512 MB per run.
 
 For trusted local deployments only, set `RFLASH_ENABLE_SERVER_PATHS=1` before
 starting the app to reveal server-side input and output path fields. These
