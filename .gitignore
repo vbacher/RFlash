@@ -31,3 +31,6 @@ debugging/
 
 # gradio
 .gradio/
+
+# Maintainer-only deployment notes
+DEPLOYMENT.md

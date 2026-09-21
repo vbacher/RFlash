@@ -25,12 +25,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+
 def visualize_2d_image(
     img: np.ndarray,
     spacing_mm: np.ndarray = np.asarray([1, 1]),
     title="Image",
     f_name=None,
-    file=None,
+    file=".",
 ) -> None:
     """Save a 2D image visualization without opening a matplotlib window."""
 
@@ -51,7 +52,7 @@ def visualize_2d_image(
         ax.imshow(img, extent=extent, origin="upper")
     ax.set_xlabel("x [mm]")
     ax.set_ylabel("y [mm]")
-    output_dir = Path(file or "debugging")
+    output_dir = Path(file)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_name = f_name or "image.png"
     plt.savefig(output_dir / output_name)
@@ -62,7 +63,7 @@ def visualize_vol(
     volume: np.ndarray | torch.Tensor,
     spacing_mm: list[float] | np.ndarray = (1.0, 1.0, 1.0),
     title: str = "volume",
-    output_path: str | Path = "debugging/volume_midplanes.png",
+    output_path: str | Path = "volume_midplanes.png",
 ) -> None:
     """Visualize the three middle planes of an ultrasound volume.
 

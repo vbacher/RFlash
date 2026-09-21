@@ -1,6 +1,16 @@
+---
+title: RFlash
+emoji: 🩻
+colorFrom: pink
+colorTo: blue
+sdk: gradio
+app_file: app.py
+pinned: false
+---
+
 # RFlash
 
-### [Project Page](https://vbacher.github.io/RFlash-ultrasound/) | [Demo] | [Paper]
+### [Project Page](https://vbacher.github.io/RFlash-ultrasound/) | [Demo] 
 
 RFlash is the official public demonstration repository for shadow reduction in ultrasound imaging using differentiable simulation and radiance field decomposition.
 For a GUI please use app.py, for a CLI interface use demo.py. The backend is the same.
@@ -81,9 +91,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The code has been developed for Python 3.11. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU.
+The code has been developed for Python 3.11 and also checked with Python 3.12. A CUDA or MPS accelerator is used automatically when available, otherwise the demo runs on CPU. For CUDA, install the PyTorch wheel matching the CUDA version on your machine before installing the remaining requirements; the generic `torch` requirement is intentionally suitable for CPU installs.
 
-The Gradio app listens on `0.0.0.0` by default so it can be reached through SSH port forwarding or deployed to Hugging Face Spaces without code changes.
+The Gradio app listens on `0.0.0.0` by default so it can be reached through SSH port forwarding or a local network.
 
 ## Dependencies
 
@@ -295,16 +305,6 @@ python app.py --server-port 7860
 
 Open `http://localhost:7860`, select the packaged fetal brain volume, estimate and confirm geometry, then run RFlash. On a remote machine, use SSH port forwarding as shown above.
 
-## Hugging Face Spaces Deployment
-
-Create a Gradio Space and upload this repository. The Space should install `requirements.txt` and run:
-
-```bash
-python app.py --server-name 0.0.0.0 --server-port 7860
-```
-
-For Spaces, do not enable `share=True`; the Space itself provides the public URL. Keep any example data small enough for public distribution, and ask users to upload or provide paths for larger abdominal or synthetic liver datasets.
-
 ## Scanner Geometry Estimation
 
 For our method to work, the scanner geometry must be known, especially for curvilinear and 3D scanners. The geometry is estimated by trying to identify the fan edges in the images and tracing them back to a point source.
@@ -333,10 +333,6 @@ outputs/<dataset>/
 
 `training_stats.png` is written only when `--silent` is not used. The saved volumes contain 8-bit grayscale versions of the original and shadow-reduced data.
 
-## Model Weights
-
-No pretrained model weights are required. The demo trains the explicit representation from the input data using the parameters in `src/trainings_params.py`.
-
 ## Citation
 
 If you use this code, please cite:
@@ -349,8 +345,6 @@ If you use this code, please cite:
 }
 ```
 
-Update this entry with the final publication details once available.
-
 ## License
 
 This repository is distributed under the terms described in [LICENSE](LICENSE).
@@ -358,11 +352,11 @@ This repository is distributed under the terms described in [LICENSE](LICENSE).
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the repository's disclosure process and
-deployment guidance. Never commit API keys, credentials, private datasets, or
-patient-identifiable data.
+deployment guidance.
 
 ## Contact
 
 Valentin Bacher
-valentin.bacher@cs.ox.ac.uk
-OMNI Lab, Department of Computer Science, University of Oxford
+(valentin.bacher@cs.ox.ac.uk)
+
+[OMNI Lab](https://omni.cs.ox.ac.uk/), Department of Computer Science, University of Oxford
